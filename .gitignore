@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Secrets — NUNCA subir credenciales reales
+# ─────────────────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+*.key
+*.pem
+credentials.json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Datos de clientes / outputs de evaluaciones
+# Contienen prompts reales, nombres de credenciales productivas,
+# scores de agentes de clientes. No publicar.
+# ─────────────────────────────────────────────────────────────────────────────
+outputs/
+!outputs/.gitkeep
+TEST - Lía AI Agent (Euro Pickers).json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Documentación interna / notas de proceso
+# Si querés versionar alguno, sacarlo de esta lista a propósito.
+# ─────────────────────────────────────────────────────────────────────────────
+*.docx
+EL_JUEZ.txt
+API.txt
+historial_tareas_juez.txt
+planeacion_juez.txt
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Entornos virtuales y caches de Python
+# ─────────────────────────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.pytest-tmp/
+.mypy_cache/
+.ruff_cache/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Herramientas y editores
+# ─────────────────────────────────────────────────────────────────────────────
+.deepeval/
+.claude/
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logs y temporales
+# ─────────────────────────────────────────────────────────────────────────────
+*.log
+*.tmp
+nohup.out

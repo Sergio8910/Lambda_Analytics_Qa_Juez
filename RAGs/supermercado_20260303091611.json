@@ -1,0 +1,11 @@
+﻿{
+  "name": "supermercado",
+  "chunks": [
+    "Producto X: $10",
+    "Producto Y: $5",
+    "Promoción: 2x1 en X",
+    "Disponibilidad: X en stock, Y stock limitado",
+    "Horario: Lunes a sábado 08:00-20:00; Domingo 09:00-18:00",
+    "Métodos de pago: efectivo, tarjeta, transferencia"
+  ]
+}

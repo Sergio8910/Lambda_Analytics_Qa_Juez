@@ -1,0 +1,51 @@
+# Core dependencies
+deepeval
+openai
+pytest
+pydantic>=2.0
+python-dotenv>=1.0.0
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart
+
+# Async + Job Queue
+celery[redis]>=5.3.0
+redis>=5.0.0
+
+# Database
+sqlalchemy>=2.0
+psycopg2-binary>=2.9.0
+alembic>=1.12.0
+
+# Observability
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-exporter-jaeger-thrift>=1.20.0
+opentelemetry-exporter-prometheus>=0.41b0
+opentelemetry-instrumentation-fastapi>=0.41b0
+opentelemetry-instrumentation-celery>=0.41b0
+opentelemetry-instrumentation-sqlalchemy>=0.41b0
+prometheus-client>=0.18.0
+
+# Security + Auth
+cryptography>=41.0.0
+pyjwt>=2.8.0
+python-jose[cryptography]>=3.3.0
+
+# HTTP clients
+requests>=2.31.0
+httpx>=0.25.0
+websockets>=11.0
+
+# Cloud storage
+boto3>=1.28.0
+
+# Testing + Quality
+schemathesis>=3.24.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+
+# Optional but recommended
+reportlab>=4.0.0  # PDF generation
+pymupdf>=1.24.0  # PDF inspection (artifact QA: embedded image count, structure)
+langwatch>=0.5.0  # Optional LLM observability

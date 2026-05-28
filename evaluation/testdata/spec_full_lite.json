@@ -1,0 +1,39 @@
+﻿{
+  "run_id": "full-lite-run",
+  "mode": "deterministic",
+  "num_tests": 8,
+  "seed": 7,
+  "agent_kind": "callable",
+  "agent_module": "agent",
+  "agent_function": "run_agent",
+  "agent_timeout_s": 5,
+  "metrics": [
+    { "name": "answer_relevancy", "threshold": 0.80, "enabled": true, "weight": 1.0, "config": {} },
+    { "name": "instruction_adherence", "threshold": 0.85, "enabled": true, "weight": 1.0, "config": {} },
+    { "name": "task_success", "threshold": 0.80, "enabled": true, "weight": 1.0, "config": {} },
+    { "name": "unsupported_claims", "threshold": 0.70, "enabled": true, "weight": 1.0, "config": { "ignore_unverifiable": true, "penalize_numbers": true } },
+    { "name": "latency_budget", "threshold": 1.00, "enabled": true, "weight": 1.0, "config": { "jitter_ms": 300 } }
+  ],
+  "instruction_policy": {
+    "language": "es",
+    "do_not_invent": true,
+    "no_markdown": true,
+    "brand_tone": "profesional y cordial",
+    "refusal_message_hint": "Lo siento, no tengo acceso a esa información ahora.",
+    "additional_rules": []
+  },
+  "task_contract_default": {
+    "must_include": [],
+    "must_not_include": [],
+    "require_next_step": false,
+    "require_clarifying_question_if_ambiguous": false,
+    "output_format": "free_text",
+    "json_schema": null
+  },
+  "global_context": [],
+  "allow_empty_retrieval": true,
+  "enable_metamorphic": false,
+  "metamorphic_variants_per_case": 0,
+  "latency_budget_ms": 5000,
+  "fail_fast": true
+}

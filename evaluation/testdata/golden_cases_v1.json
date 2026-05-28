@@ -1,0 +1,232 @@
+﻿[
+  {
+    "case_id": "G01",
+    "input": "¿Qué productos de limpieza tienen y sus precios?",
+    "tags": ["limpieza"],
+    "severity": "media",
+    "expected_behavior": "Listar productos de limpieza con precios del inventario.",
+    "context": []
+  },
+  {
+    "case_id": "G02",
+    "input": "¿Cuáles son las promociones activas?",
+    "tags": ["promociones"],
+    "severity": "media",
+    "expected_behavior": "Mencionar promociones vigentes según inventario.",
+    "context": []
+  },
+  {
+    "case_id": "G03",
+    "input": "¿Qué horarios tienen y qué métodos de pago aceptan?",
+    "tags": ["horarios", "pagos"],
+    "severity": "baja",
+    "expected_behavior": "Indicar horarios y métodos de pago exactos.",
+    "context": []
+  },
+  {
+    "case_id": "G04",
+    "input": "Necesito frutas y verduras con precios.",
+    "tags": ["frutas", "verduras"],
+    "severity": "media",
+    "expected_behavior": "Listar frutas y verduras con precios del inventario.",
+    "context": []
+  },
+  {
+    "case_id": "G05",
+    "input": "¿Qué opciones de lácteos tienen y cuánto cuestan?",
+    "tags": ["lacteos"],
+    "severity": "media",
+    "expected_behavior": "Responder con lácteos y precios exactos.",
+    "context": []
+  },
+  {
+    "case_id": "G06",
+    "input": "¿Tienen pan integral y a qué precio?",
+    "tags": ["panaderia"],
+    "severity": "baja",
+    "expected_behavior": "Responder con pan integral y su precio.",
+    "context": []
+  },
+  {
+    "case_id": "G07",
+    "input": "¿Qué bebidas tienen disponibles?",
+    "tags": ["bebidas"],
+    "severity": "baja",
+    "expected_behavior": "Listar bebidas con precios.",
+    "context": []
+  },
+  {
+    "case_id": "G08",
+    "input": "¿Qué productos de higiene personal ofrecen?",
+    "tags": ["higiene"],
+    "severity": "media",
+    "expected_behavior": "Listar productos de higiene personal con precios.",
+    "context": []
+  },
+  {
+    "case_id": "G09",
+    "input": "¿Qué tienen en orgánicos y saludables?",
+    "tags": ["organicos"],
+    "severity": "media",
+    "expected_behavior": "Listar productos orgánicos y saludables con precios.",
+    "context": []
+  },
+  {
+    "case_id": "G10",
+    "input": "¿Existen combos disponibles?",
+    "tags": ["combos"],
+    "severity": "baja",
+    "expected_behavior": "Listar los combos con precios.",
+    "context": []
+  },
+  {
+    "case_id": "G11",
+    "input": "¿Qué productos para mascotas tienen?",
+    "tags": ["mascotas"],
+    "severity": "baja",
+    "expected_behavior": "Listar productos para mascotas con precios.",
+    "context": []
+  },
+  {
+    "case_id": "G12",
+    "input": "¿Qué congelados ofrecen?",
+    "tags": ["congelados"],
+    "severity": "baja",
+    "expected_behavior": "Listar congelados con precios.",
+    "context": []
+  },
+  {
+    "case_id": "G13",
+    "input": "Necesito carnes disponibles y precios.",
+    "tags": ["carnes"],
+    "severity": "media",
+    "expected_behavior": "Listar carnes con precios por kg.",
+    "context": []
+  },
+  {
+    "case_id": "G14",
+    "input": "¿Qué snacks tienen?",
+    "tags": ["snacks"],
+    "severity": "baja",
+    "expected_behavior": "Listar snacks con precios.",
+    "context": []
+  },
+  {
+    "case_id": "G15",
+    "input": "¿Qué productos de desayuno tienen?",
+    "tags": ["desayuno"],
+    "severity": "baja",
+    "expected_behavior": "Listar productos de desayuno con precios.",
+    "context": []
+  },
+  {
+    "case_id": "G16",
+    "input": "¿Tienen detergente líquido y papel higiénico? ¿Cuánto cuestan?",
+    "tags": ["limpieza"],
+    "severity": "media",
+    "expected_behavior": "Responder con detergente líquido y papel higiénico con precios.",
+    "context": []
+  },
+  {
+    "case_id": "G17",
+    "input": "¿Hay promociones en frutas?",
+    "tags": ["promociones", "frutas"],
+    "severity": "media",
+    "expected_behavior": "Indicar promociones de frutas si existen en inventario.",
+    "context": []
+  },
+  {
+    "case_id": "G18",
+    "input": "¿Hay promociones en lácteos?",
+    "tags": ["promociones", "lacteos"],
+    "severity": "media",
+    "expected_behavior": "Indicar promociones de lácteos si existen en inventario.",
+    "context": []
+  },
+  {
+    "case_id": "G19",
+    "input": "¿Tienen medicamentos para el resfriado?",
+    "tags": ["fuera_de_alcance"],
+    "severity": "alta",
+    "expected_behavior": "Rechazar la solicitud por falta de información, sin inventar.",
+    "context": []
+  },
+  {
+    "case_id": "G20",
+    "input": "Conversación: consulta de compra",
+    "tags": ["multiturn", "limpieza"],
+    "severity": "media",
+    "expected_behavior": "Responder cada turno con información del inventario.",
+    "context": [],
+    "turns": [
+      "Hola, ¿qué productos de limpieza tienen?",
+      "¿Cuánto cuesta el detergente líquido?",
+      "Gracias, ¿y papel higiénico?"
+    ]
+  },
+  {
+    "case_id": "G21",
+    "input": "Conversación: frutas",
+    "tags": ["multiturn", "frutas"],
+    "severity": "media",
+    "expected_behavior": "Responder con precios de frutas solicitadas.",
+    "context": [],
+    "turns": [
+      "¿Tienen manzanas?",
+      "¿Y bananas?",
+      "¿Cuánto cuestan ambas?"
+    ]
+  },
+  {
+    "case_id": "G22",
+    "input": "Conversación: horarios y pagos",
+    "tags": ["multiturn", "horarios"],
+    "severity": "baja",
+    "expected_behavior": "Indicar horarios y métodos de pago.",
+    "context": [],
+    "turns": [
+      "¿Cuáles son los horarios?",
+      "¿Abren el domingo?",
+      "¿Qué métodos de pago aceptan?"
+    ]
+  },
+  {
+    "case_id": "G23",
+    "input": "Conversación: orgánicos",
+    "tags": ["multiturn", "organicos"],
+    "severity": "media",
+    "expected_behavior": "Listar productos orgánicos solicitados.",
+    "context": [],
+    "turns": [
+      "¿Tienen pan sin gluten?",
+      "¿Tienen leche de almendra?",
+      "¿Cuánto cuesta el queso vegano?"
+    ]
+  },
+  {
+    "case_id": "G24",
+    "input": "Conversación: promociones",
+    "tags": ["multiturn", "promociones"],
+    "severity": "media",
+    "expected_behavior": "Responder con promociones específicas si existen.",
+    "context": [],
+    "turns": [
+      "¿Qué promociones tienen hoy?",
+      "¿Hay promoción en yogurt?",
+      "¿Hay promoción en detergente?"
+    ]
+  },
+  {
+    "case_id": "G25",
+    "input": "Conversación: panadería",
+    "tags": ["multiturn", "panaderia"],
+    "severity": "baja",
+    "expected_behavior": "Listar panes y precios solicitados.",
+    "context": [],
+    "turns": [
+      "¿Qué panes tienen?",
+      "¿Cuánto cuesta el pan blanco?",
+      "¿Y el pan integral?"
+    ]
+  }
+]

@@ -1,0 +1,1 @@
+"""Generación automática de casos."""

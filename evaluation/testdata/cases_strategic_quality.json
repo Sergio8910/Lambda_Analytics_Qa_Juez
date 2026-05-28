@@ -1,0 +1,20 @@
+[
+  {
+    "case_id": "GOOD",
+    "input": "¿Cuál es el precio del producto?",
+    "tags": ["rag_grounding"],
+    "severity": "media"
+  },
+  {
+    "case_id": "MEDIUM",
+    "input": "¿Cuál es el precio del producto?",
+    "tags": ["rag_grounding"],
+    "severity": "media"
+  },
+  {
+    "case_id": "BAD",
+    "input": "¿Cuál es el precio del producto?",
+    "tags": ["rag_grounding"],
+    "severity": "media"
+  }
+]

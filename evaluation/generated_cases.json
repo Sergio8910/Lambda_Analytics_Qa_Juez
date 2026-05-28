@@ -1,0 +1,27 @@
+[
+  {
+    "input": "\u00bfQu\u00e9 productos de frutas y verduras tienen y sus precios?",
+    "expected_behavior": "Listar frutas y verduras disponibles con precios del inventario.",
+    "context": []
+  },
+  {
+    "input": "\u00bfCu\u00e1les son las promociones activas?",
+    "expected_behavior": "Mencionar promociones vigentes tal como figuran en el inventario.",
+    "context": []
+  },
+  {
+    "input": "\u00bfQu\u00e9 m\u00e9todos de pago aceptan y cu\u00e1les son los horarios?",
+    "expected_behavior": "Indicar m\u00e9todos de pago y horarios exactos del inventario.",
+    "context": []
+  },
+  {
+    "input": "Necesito leche y yogurt, \u00bfqu\u00e9 opciones tienen y precios?",
+    "expected_behavior": "Responder con opciones de l\u00e1cteos y sus precios seg\u00fan inventario.",
+    "context": []
+  },
+  {
+    "input": "\u00bfTienen detergente l\u00edquido y papel higi\u00e9nico? \u00bfCu\u00e1nto cuestan?",
+    "expected_behavior": "Responder con productos de limpieza y precios seg\u00fan inventario.",
+    "context": []
+  }
+]

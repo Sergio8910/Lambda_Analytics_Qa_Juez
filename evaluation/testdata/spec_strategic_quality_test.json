@@ -1,0 +1,12 @@
+{
+  "run_id": "strategic-quality-test",
+  "agent_module": "evaluation.testdata.mock_strategic_agent",
+  "agent_function": "run_agent",
+  "enable_metamorphic": false,
+  "metrics": [
+    { "name": "answer_relevancy", "threshold": 0.70, "enabled": true, "config": {} },
+    { "name": "faithfulness", "threshold": 0.70, "enabled": true, "config": {} },
+    { "name": "contextual_precision", "threshold": 0.70, "enabled": true, "config": {} }
+  ],
+  "cases_file": "evaluation/testdata/cases_strategic_quality.json"
+}

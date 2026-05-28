@@ -1,0 +1,54 @@
+{
+  "contra_agent": {
+    "enabled": true,
+    "run_id": "contra-demo",
+    "seed": 7,
+    "language": "es",
+    "prompt_base": "Eres el asistente oficial de Supermercado Euro. Responde de forma clara, sin markdown, y evita inventar informacion. Si no tienes datos, pregunta o indica que no dispones de esa informacion.",
+    "num_cases": 5,
+    "intensity": "rapida",
+    "domain": "retail",
+    "rag": {
+      "enabled": true,
+      "context_text": "Supermercado Euro maneja productos de limpieza, lacteos, panaderia y frutas. En limpieza: detergente 1L $3.50, jabon 1kg $4.90. En lacteos: leche entera 1L $1.20, yogurt 500g $2.10.\n\nPromociones vigentes: 2x1 en yogurt natural, 10% en detergente, 3x2 en refresco cola. Horario: lunes a sabado 8:00-20:00.",
+      "allow_empty_retrieval": false,
+      "must_ground_in_context": true
+    },
+    "output_contract": {
+      "output_format": "free_text",
+      "json_schema": null,
+      "no_markdown": true,
+      "must_include": [],
+      "must_not_include": ["markdown"],
+      "require_clarifying_question_if_ambiguous": true
+    },
+    "gating_metrics": ["task_success_deterministic", "unsupported_claims", "format_compliance", "latency_budget"],
+    "diagnostic_metrics": ["answer_relevancy", "instruction_adherence", "task_success", "faithfulness", "contextual_precision", "hallucination"],
+    "judge_profile": {
+      "judge_model": "gpt-4o-mini",
+      "llm_preflight": true,
+      "llm_metric_timeout_s": 30,
+      "llm_fail_fast_on_infra": true,
+      "metrics": [
+        { "name": "answer_relevancy", "threshold": 0.80, "enabled": true, "weight": 1.0, "config": {} },
+        { "name": "instruction_adherence", "threshold": 0.85, "enabled": true, "weight": 1.0, "config": {} },
+        { "name": "task_success", "threshold": 0.80, "enabled": true, "weight": 1.0, "config": {} },
+        { "name": "faithfulness", "threshold": 0.90, "enabled": true, "weight": 1.0, "config": {} },
+        { "name": "contextual_precision", "threshold": 0.80, "enabled": true, "weight": 1.0, "config": {} },
+        { "name": "hallucination", "threshold": 0.85, "enabled": true, "weight": 1.0, "config": {} },
+        { "name": "task_success_deterministic", "threshold": 0.67, "enabled": true, "weight": 1.0, "config": {} },
+        { "name": "completeness", "threshold": 0.80, "enabled": true, "weight": 1.0, "config": {} },
+        { "name": "unsupported_claims", "threshold": 0.70, "enabled": true, "weight": 1.0, "config": { "ignore_unverifiable": true, "penalize_numbers": true } },
+        { "name": "format_compliance", "threshold": 1.00, "enabled": true, "weight": 1.0, "config": {} },
+        { "name": "consistency", "threshold": 0.80, "enabled": true, "weight": 1.0, "config": {} },
+        { "name": "latency_budget", "threshold": 1.00, "enabled": true, "weight": 1.0, "config": { "jitter_ms": 300 } }
+      ]
+    },
+    "budget_controls": {
+      "max_llm_calls": 50,
+      "max_cost_usd": null
+    },
+    "latency_budget_ms": 12000,
+    "grading_mode": "rubric"
+  }
+}

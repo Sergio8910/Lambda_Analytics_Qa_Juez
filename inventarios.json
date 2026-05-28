@@ -1,0 +1,24 @@
+﻿{
+  "supermercado_euro": {
+    "contexto": [
+      "Supermercado Euro - Secciones: frutas y verduras, carnes, lacteos, panaderia, bebidas, limpieza, congelados, snacks, desayuno, mascotas, higiene personal, hogar, organicos y saludables.",
+      "Frutas y verduras: manzana roja $1.20 c/u, manzana verde $1.15 c/u, banana $0.50 c/u, naranja $0.80 c/u, mandarina $0.70 c/u, tomate $1.00 c/u, lechuga $1.30 c/u, papa $0.60 c/u, zanahoria $0.55 c/u, brocoli $1.40 c/u.",
+      "Carnes: pollo entero $5.99/kg, pechuga de pollo $7.49/kg, carne molida res $8.99/kg, lomo de cerdo $7.99/kg, filete de res $12.50/kg.",
+      "Lacteos: leche entera 1L $1.29, leche descremada 1L $1.25, yogurt natural 500g $2.50, yogurt fresa 500g $2.60, queso gouda 200g $3.80, queso mozzarella 200g $3.60.",
+      "Panaderia: pan blanco 500g $1.80, pan integral 500g $2.10, croissant x2 $2.40, baguette $1.90.",
+      "Bebidas: agua 1.5L $0.90, jugo naranja 1L $2.20, jugo manzana 1L $2.10, refresco cola 2L $2.30, te helado 1L $1.80.",
+      "Limpieza: detergente liquido 1L (EuroClean) $3.50, jabon en polvo 1kg (Brillo) $4.90, desinfectante 1L (HogarPlus) $3.10, limpiavidrios 1L (ClariView) $2.80, esponjas x3 $1.50, papel higienico x4 $2.60.",
+      "Congelados: pizza congelada $4.50, helado 1L $5.20, verduras mixtas 500g $2.70, nuggets de pollo 400g $4.10.",
+      "Snacks: papas fritas 150g $1.90, galletas chocolate 200g $2.10, frutos secos 100g $3.00, barras de cereal x6 $2.80.",
+      "Desayuno: cereal maiz 500g $3.20, avena 1kg $2.90, mermelada fresa 350g $2.40, miel 300g $3.70.",
+      "Mascotas: alimento perro 2kg $6.50, alimento gato 1.5kg $5.90, arena sanitaria 5kg $4.80.",
+      "Higiene personal: shampoo 400ml (Suave) $3.90, acondicionador 400ml (Suave) $3.70, jabon corporal x3 $2.20, jabon liquido 500ml $2.80, pasta dental 90g $1.60, desodorante spray 150ml $3.40.",
+      "Organicos y saludables: quinoa 500g $4.20, avena integral 1kg $3.10, leche deslactosada 1L $1.45, pan integral 500g $2.10, pan sin gluten 400g $3.50, leche de almendra 1L $2.80, queso vegano 200g $4.50, aceite de oliva 500ml $6.50, mix frutos secos 200g $4.00.",
+      "Hogar: velas x4 $2.50, pilas AA x4 $3.20, bolsas basura x20 $2.10.",
+      "Combos: Pack Limpieza (detergente liquido 1L + desinfectante 1L) $6.10; Pack Desayuno (cereal maiz 500g + leche entera 1L) $4.20.",
+      "Promociones: 2x1 en yogurt natural; 10% descuento en detergente liquido; 3x2 en refresco cola; 2x1 en cereal maiz; 15% descuento en shampoo 400ml; 2x1 en pasta dental 90g; 10% descuento en quinoa 500g; 10% descuento en jabon liquido 500ml; 2x1 en desodorante spray 150ml; 10% descuento en manzana roja; 3x2 en banana; 10% descuento en pan integral 500g; 2x1 en leche de almendra 1L.",
+      "Horarios: Lunes a sabado 8:00-21:00, domingo 9:00-15:00.",
+      "Metodos de pago: efectivo, tarjeta, transferencia."
+    ]
+  }
+}
