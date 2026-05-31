@@ -48,4 +48,5 @@ pytest-cov>=4.1.0
 # Optional but recommended
 reportlab>=4.0.0  # PDF generation
 pymupdf>=1.24.0  # PDF inspection (artifact QA: embedded image count, structure)
+Pillow>=10.0.0   # Manipulación de imágenes (fixtures de tests del verificador, imágenes del cliente)
 langwatch>=0.5.0  # Optional LLM observability

@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff==0.5.0
+      - run: ruff check . || true  # no bloquea — solo informa hasta que el código esté limpio
+      - run: ruff format --check . || true
+
+  test-juez:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: pip install Pillow reportlab pymupdf
+      - run: |
+          python -m pytest \
+            juez/evaluation/contra_agente/synthetic/tests/ \
+            juez/evaluation/contra_agente/tests/ \
+            -v --tb=short -p no:xdist -p no:rerunfailures
+        env:
+          OPENAI_API_KEY: "dummy-key-for-mocks"
+
+  test-verificador:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: pip install Pillow reportlab pymupdf
+      - run: |
+          python -m pytest \
+            verificador/tests/ \
+            -v --tb=short -p no:xdist -p no:rerunfailures
+        env:
+          VERIFICADOR_API_KEY: "test-key"

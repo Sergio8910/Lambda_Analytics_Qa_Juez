@@ -122,6 +122,21 @@ services:
       timeout: 5s
       retries: 5
 
+  verificador:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.verificador
+    container_name: juez-verificador
+    ports: ["8001:8001"]
+    environment:
+      DATABASE_URL: "postgresql://juez_user:juez_pass_dev@postgres:5432/juez"
+      VERIFICADOR_API_KEY: "${VERIFICADOR_API_KEY:-dev-key}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./outputs:/app/outputs
+
 volumes:
   postgres_data:
   redis_data:
