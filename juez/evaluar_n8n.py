@@ -1950,50 +1950,83 @@ def _ask_int(prompt: str, default: int, minimum: int = 1) -> int:
 
 def _preguntar_config_e2e(default_cases: int = 1) -> Dict[str, Any]:
     """Sub-menú para configurar el modo e2e. Retorna dict con e2e_cases y
-    e2e_real_inventario_id (None si sintético)."""
+    e2e_real_inventario_id (None si sintético).
+
+    Selección automática del inventario cuando se elige BD real: el sistema
+    consulta los inventarios disponibles, lista los candidatos y elige
+    automáticamente el de mayor cantidad de fotos (más rico para auditar).
+    Si querés override manual, tipeás otro id; Enter confirma la auto-elección.
+    """
     cases = _ask_int("¿Cuantos casos e2e quieres?", default=default_cases, minimum=1)
     usar_real = _ask_yes_no(
         "¿Usar datos REALES de la BD productiva (read-only) para el snapshot?",
         default_yes=False,
     )
     real_inv_id: Optional[int] = None
-    if usar_real:
-        # Sugerir inventarios disponibles si se puede consultar la BD
-        try:
-            from juez.evaluation.contra_agente.synthetic.real_db_source import (
-                listar_inventarios_disponibles,
+    if not usar_real:
+        return {"e2e_cases": cases, "e2e_real_inventario_id": None}
+
+    # Buscar candidatos automáticamente y elegir el mejor (más fotos).
+    # Si la BD no responde, caemos a modo sintético sin pedir input — el
+    # usuario no debería tener que tipear ids manualmente.
+    invs_con_fotos: List[Dict[str, Any]] = []
+    db_disponible = False
+    try:
+        from juez.evaluation.contra_agente.synthetic.real_db_source import (
+            listar_inventarios_disponibles,
+        )
+        invs = listar_inventarios_disponibles()
+        invs_con_fotos = [i for i in invs if i["fotos"] > 0]
+        db_disponible = True
+    except Exception as exc:
+        if HAS_RICH:
+            console.print(
+                f"\n  [yellow]No pude leer la BD ({type(exc).__name__}). "
+                "Cayendo a modo sintético automáticamente.[/yellow]"
             )
-            invs = listar_inventarios_disponibles()
-            invs_con_fotos = [i for i in invs if i["fotos"] > 0]
-            if invs_con_fotos:
-                if HAS_RICH:
-                    console.print(
-                        "\n  [dim]Inventarios disponibles con fotos:[/dim]"
-                    )
-                else:
-                    print("\n  Inventarios disponibles con fotos:")
-                for i in invs_con_fotos:
-                    print(
-                        f"    id={i['inventario_id']:3d} contrato={i['contrato_id']:>4} "
-                        f"ambientes={i['ambientes']:2d} fotos={i['fotos']:3d}"
-                    )
-                # Default: el que tenga más fotos
-                mejor = max(invs_con_fotos, key=lambda x: x["fotos"])
-                default_inv = mejor["inventario_id"]
-            else:
-                default_inv = 1
-        except Exception as exc:
-            if HAS_RICH:
-                console.print(
-                    f"\n  [yellow]No pude listar inventarios desde la BD ({type(exc).__name__}). "
-                    "Pide el id manualmente.[/yellow]"
-                )
-            else:
-                print(f"\n  No pude listar inventarios desde la BD ({type(exc).__name__}). "
-                      "Pide el id manualmente.")
-            default_inv = 1
-        real_inv_id = _ask_int("¿Cual inventario_id usar?", default=default_inv, minimum=1)
-    return {"e2e_cases": cases, "e2e_real_inventario_id": real_inv_id}
+        else:
+            print(f"\n  No pude leer la BD ({type(exc).__name__}). "
+                  "Cayendo a modo sintético automáticamente.")
+        return {"e2e_cases": cases, "e2e_real_inventario_id": None}
+
+    if not invs_con_fotos:
+        # BD responde pero no hay inventarios productivos con fotos. Caemos
+        # a sintético sin preguntar.
+        if HAS_RICH:
+            console.print(
+                "\n  [yellow]La BD respondió pero no hay inventarios con fotos cargadas. "
+                "Cayendo a modo sintético automáticamente.[/yellow]"
+            )
+        else:
+            print("\n  La BD respondió pero no hay inventarios con fotos cargadas. "
+                  "Cayendo a modo sintético automáticamente.")
+        return {"e2e_cases": cases, "e2e_real_inventario_id": None}
+
+    # Hay candidatos: mostrar la lista por transparencia y elegir automáticamente
+    # el de mayor cantidad de fotos. SIN preguntar nada al usuario.
+    if HAS_RICH:
+        console.print("\n  [dim]Inventarios disponibles con fotos:[/dim]")
+    else:
+        print("\n  Inventarios disponibles con fotos:")
+    for i in invs_con_fotos:
+        print(
+            f"    id={i['inventario_id']:3d} contrato={i['contrato_id']:>4} "
+            f"ambientes={i['ambientes']:2d} fotos={i['fotos']:3d}"
+        )
+    mejor = max(invs_con_fotos, key=lambda x: x["fotos"])
+    auto_id = mejor["inventario_id"]
+    if HAS_RICH:
+        console.print(
+            f"\n  [green]Inventario seleccionado automáticamente: "
+            f"id={auto_id} ({mejor['fotos']} fotos, {mejor['ambientes']} ambientes)[/green]"
+        )
+    else:
+        print(
+            f"\n  Inventario seleccionado automaticamente: "
+            f"id={auto_id} ({mejor['fotos']} fotos, {mejor['ambientes']} ambientes)"
+        )
+
+    return {"e2e_cases": cases, "e2e_real_inventario_id": auto_id}
 
 
 def _seleccionar_modo_analisis() -> Dict[str, Any]:
@@ -2630,10 +2663,34 @@ def main() -> None:
                         help="Audita el PDF YA generado de un inventario real (read-only): lee la "
                              "BD productiva, resuelve el drive_file_id del ultimo pdf_aprobacion y "
                              "lo despacha al Verificador. NO ejecuta el contra-agente.")
+    parser.add_argument("--audit-real-last", action="store_true",
+                        help="Como --audit-real-inventario-id pero AUTOMATICO: resuelve solo el "
+                             "inventario con PDF mas reciente. Cero IDs manuales.")
     args, argv_pos = parser.parse_known_args()
 
-    # ── Short-circuit: audit-real-inventario-id ──────────────────────────────
+    # ── Short-circuit: audit-real-* ──────────────────────────────────────────
     # Bypassea el menu interactivo y el contra-agente. Solo lee BD + Verificador.
+    if args.audit_real_last:
+        banner()
+        from juez.evaluation.contra_agente.audit_real_pdf import (
+            resolver_ultimo_inventario_con_pdf,
+        )
+        inv_id = resolver_ultimo_inventario_con_pdf()
+        if inv_id is None:
+            msg = ("No pude resolver automaticamente el ultimo inventario con PDF "
+                   "(BD inaccesible o sin PDFs registrados).")
+            if HAS_RICH:
+                console.print(f"[red]{msg}[/red]")
+            else:
+                print(msg)
+            sys.exit(1)
+        if HAS_RICH:
+            console.print(f"[green]Auto-seleccionado inventario_id={inv_id} (PDF mas reciente)[/green]")
+        else:
+            print(f"Auto-seleccionado inventario_id={inv_id} (PDF mas reciente)")
+        exit_code = _run_audit_real_inventario(inv_id)
+        sys.exit(exit_code)
+
     if args.audit_real_inventario_id is not None:
         banner()
         exit_code = _run_audit_real_inventario(args.audit_real_inventario_id)

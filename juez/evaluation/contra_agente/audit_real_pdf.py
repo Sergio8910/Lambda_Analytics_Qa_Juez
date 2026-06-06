@@ -82,6 +82,48 @@ def _connect_readonly():
         raise RealDbError(f"BD Abad: {type(exc).__name__}: {exc}") from exc
 
 
+def resolver_ultimo_inventario_con_pdf() -> Optional[int]:
+    """Devuelve el `inventario_id` del PDF más reciente generado en producción.
+
+    Estrategia: ordenar `abad_faciolince.pdf_aprobacion` por `fecha_creacion DESC`
+    y devolver el primer registro que tenga URL válida en al menos uno de los
+    dos campos de Drive (arrendador o propietario).
+
+    Devuelve None si:
+      - No hay credencial de BD (`ABAT_DB_URL` ausente).
+      - La BD no responde.
+      - No hay PDFs en la tabla.
+      - Ningún PDF tiene URL parseable.
+
+    El caller debe interpretar None como "no se pudo resolver, sugerir modo manual".
+    """
+    sql = """
+        SELECT inventario_id, pdf_arrendador_drive_url, pdf_propietario_drive_url
+        FROM abad_faciolince.pdf_aprobacion
+        ORDER BY fecha_creacion DESC
+        LIMIT 50
+    """
+    try:
+        conn = _connect_readonly()
+    except RealDbError as exc:
+        log.warning("resolver_ultimo_inventario_con_pdf: BD no accesible: %s", exc)
+        return None
+
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    for inv_id, arr_url, prop_url in rows:
+        for candidate in (arr_url, prop_url):
+            if _extract_drive_file_id(candidate):
+                return int(inv_id)
+    return None
+
+
 def _get_pdf_drive_file_id(inventario_id: int) -> Optional[str]:
     """Lee `abad_faciolince.pdf_aprobacion` ordenando por `fecha_creacion DESC LIMIT 1`
     y devuelve el `file_id` extraído de `pdf_arrendador_drive_url` (o
