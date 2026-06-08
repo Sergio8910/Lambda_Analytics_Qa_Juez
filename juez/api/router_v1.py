@@ -19,6 +19,7 @@ from juez.api.schemas_v1 import (
     JobCreatedResponse,
     JobListResponse,
     JobStatusResponse,
+    VerifyObjectivesRequest,
 )
 
 
@@ -169,6 +170,39 @@ def evaluate_pipeline(req: EvalPipelineRequest) -> Dict[str, Any]:
         "created_at": job["created_at"],
         "poll_url": f"/api/v1/evaluate/{job_id}",
     }
+
+
+# =============================================================================
+# VERIFICACIÓN SINTÉTICA DE OBJETIVOS (síncrono — NO dispara nada)
+# =============================================================================
+
+
+@router.post("/verify/objectives", tags=["juez-v1"])
+def verify_objectives_endpoint(req: VerifyObjectivesRequest) -> Dict[str, Any]:
+    """Verifica SINTÉTICAMENTE que un flujo n8n cumple sus objetivos.
+
+    No ejecuta ni dispara nada: analiza el JSON del flujo y recorre el grafo en
+    seco. Para cada objetivo declarado confirma que existe un nodo que lo cumple,
+    alcanzable desde el trigger, habilitado y configurado.
+
+    Es síncrono (el análisis es rápido, no hay I/O externo). Pasa el flujo en
+    `flow.json_content`.
+
+    Devuelve veredicto (`cumple` / `cumple_parcial` / `no_cumple`), score global
+    y, por objetivo, su status (`cumplido` / `parcial` / `incumplido`) con findings.
+    """
+    from juez.evaluation.n8n import Objective, verify_objectives
+
+    workflow = req.flow.json_content
+    if not workflow:
+        raise HTTPException(
+            status_code=400,
+            detail="El modo sintético requiere el JSON del flujo en 'flow.json_content'.",
+        )
+
+    objectives = [Objective(**o.model_dump()) for o in req.objectives]
+    report = verify_objectives(workflow, objectives)
+    return report.model_dump(mode="json")
 
 
 # =============================================================================

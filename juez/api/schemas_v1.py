@@ -157,3 +157,39 @@ class HealthResponse(BaseModel):
     version: str
     evaluator_available: bool
     contra_agente_available: bool
+
+
+# =============================================================================
+# VERIFICACIÓN SINTÉTICA DE OBJETIVOS (sin disparar nada)
+# =============================================================================
+
+
+class ObjectiveInput(BaseModel):
+    """Un objetivo declarado del flujo (qué define que cumplió su propósito).
+
+    Espejo liviano de `juez.evaluation.n8n.objectives.Objective` para la API.
+    """
+
+    id: str = Field(..., description="Slug del objetivo, ej. 'crear_ticket'")
+    descripcion: str = Field("", description="Descripción legible")
+    kind: Literal[
+        "send_email", "create_ticket", "http_request", "db_write", "db_read",
+        "generate_file", "respond_webhook", "ai_response", "send_message", "custom",
+    ] = Field("custom", description="Tipo conocido de objetivo")
+    node_type_contains: List[str] = Field(default_factory=list)
+    param_contains: List[str] = Field(default_factory=list)
+    required_params: List[str] = Field(default_factory=list)
+    requires_credentials: Optional[bool] = None
+    min_count: int = Field(1, ge=1)
+    severity_if_missing: Literal["critical", "high", "medium", "low", "info"] = "high"
+
+
+class VerifyObjectivesRequest(BaseModel):
+    """Request de verificación sintética de objetivos de un flujo n8n.
+
+    NO dispara ni ejecuta nada: solo analiza el JSON del flujo. El flujo se pasa
+    en `flow.json_content` (la forma directa, sin tocar n8n).
+    """
+
+    flow: N8nFlowSource = Field(..., description="Fuente del flujo. Usa flow.json_content para el modo sintético puro.")
+    objectives: List[ObjectiveInput] = Field(..., min_length=1, description="Objetivos declarados a verificar")
