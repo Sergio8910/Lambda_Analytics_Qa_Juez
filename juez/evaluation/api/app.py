@@ -187,6 +187,47 @@ def evaluation_plan_endpoint(payload: EvaluationPlanRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+def _normalize_metrics(raw: Any) -> Any:
+    """Normaliza las reglas que llegan a /v1/evaluate.
+
+    Permite reenviar las reglas TAL CUAL salen de /v1/evaluation-plan (que usan
+    `umbral` y traen campos descriptivos como `tipo`, `existe`, ...) y las
+    traduce al formato interno `MetricSpec` (`threshold`, `enabled`, ...). Así el
+    flujo editar-reglas -> reenviar -> evaluar funciona directo, y el umbral
+    editado por el usuario SÍ se aplica. También acepta el formato MetricSpec
+    nativo sin cambios.
+    """
+    from juez.evaluation.metric_registry import METRICS
+
+    if not isinstance(raw, list):
+        return raw
+    out: List[Dict[str, Any]] = []
+    for m in raw:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        if m.get("existe") is False:
+            continue  # métrica marcada como inexistente en el plan; se ignora
+        name = m.get("name")
+        if not name:
+            continue
+        norm: Dict[str, Any] = {"name": name}
+        thr = m.get("threshold", m.get("umbral"))
+        if thr is None:
+            md = METRICS.get(name)
+            thr = md.default_threshold if md else 0.8
+        norm["threshold"] = thr
+        if "enabled" in m:
+            norm["enabled"] = bool(m["enabled"])
+        if "weight" in m or "peso" in m:
+            norm["weight"] = m.get("weight", m.get("peso"))
+        cfg = m.get("config")
+        if isinstance(cfg, dict):
+            norm["config"] = cfg
+        out.append(norm)
+    return out
+
+
 @app.post("/v1/evaluate", response_model=EvaluateResponse)
 def evaluate_endpoint(payload: EvaluateRequest) -> Dict[str, Any]:
     try:
@@ -200,6 +241,10 @@ def evaluate_endpoint(payload: EvaluateRequest) -> Dict[str, Any]:
             spec_dict["prompt_base"] = payload.prompt_base
         if payload.metrics and "metrics" not in spec_dict:
             spec_dict["metrics"] = payload.metrics
+        # Acepta reglas en el formato de /v1/evaluation-plan (umbral/tipo/...) o
+        # en MetricSpec nativo. Hace que el flujo editar -> reenviar funcione.
+        if spec_dict.get("metrics"):
+            spec_dict["metrics"] = _normalize_metrics(spec_dict["metrics"])
         if payload.config:
             spec_dict.update(payload.config)
         spec = EvaluationSpec(**spec_dict)
