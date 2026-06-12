@@ -43,7 +43,16 @@ os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "1")
 os.environ.setdefault("DEEPEVAL_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("DEEPEVAL_TELEMETRY", "false")
 
-app = FastAPI(title="Lambda AI Judge API")
+app = FastAPI(
+    title="Lambda AI Judge API — Evaluación de Agentes",
+    description=(
+        "API de evaluación de agentes (autogen). Endpoints clave:\n"
+        "- POST /v1/evaluation-plan — qué reglas y datos se evaluarían (vista previa)\n"
+        "- POST /v1/reference-data/ingest — subir información previa (Excel/Word/TXT) como verdad de base\n"
+        "- POST /v1/evaluate — evaluar (acepta casos y métricas personalizados)\n"
+        "- POST /v1/generate-cases, /v1/auto-evaluate, /v1/autogen/evaluate"
+    ),
+)
 
 
 @app.get("/health")

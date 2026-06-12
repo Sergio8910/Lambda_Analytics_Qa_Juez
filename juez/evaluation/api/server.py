@@ -54,7 +54,7 @@ if _LOG_LEVEL != "DEBUG":
     for _noisy_logger in ("openai", "openai._base_client", "httpx", "httpcore"):
         logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
 logger = logging.getLogger("juez.api.server")
-app = FastAPI(title="Juez API")
+app = FastAPI(title="Lambda AI Judge API — Análisis n8n + RAG + UI")
 
 try:
     import multipart  # type: ignore  # noqa: F401

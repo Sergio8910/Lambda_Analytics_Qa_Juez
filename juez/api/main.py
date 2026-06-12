@@ -37,7 +37,7 @@ ALLOWED_AGENTS = {
 
 
 app = FastAPI(
-    title="Lambda AI Judge API",
+    title="Lambda AI Judge API — Jobs Async (ElevenLabs/n8n/Pipeline)",
     description=(
         "API del Juez de Lambda Analytics.\n\n"
         "- `/evaluate` y `/health` — API legacy (DeepEval-based)\n"
