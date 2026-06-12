@@ -66,6 +66,53 @@ class GenerateCasesResponse(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class EvaluationPlanRequest(BaseModel):
+    """Request para previsualizar QUÉ se le va a evaluar a un agente.
+
+    Solo necesita el prompt del agente. Es 100% de solo-lectura: NO ejecuta al
+    agente ni corre la evaluación. Devuelve el perfil detectado, las reglas
+    (métricas + umbrales) que se aplicarían y los datos (casos sintéticos).
+    """
+
+    prompt_base: str = Field(..., min_length=1, description="System prompt del agente a evaluar")
+    metrics: Optional[List[str]] = Field(
+        None,
+        description="Nombres de métricas a aplicar. Si se omite, se listan TODAS las disponibles del catálogo.",
+    )
+    n_cases: int = Field(default=10, ge=1, le=50, description="Cuántos casos sintéticos generar para la vista previa")
+    seed: Optional[int] = Field(None, description="Semilla para reproducir los mismos casos")
+    incluir_casos: bool = Field(True, description="Si False, devuelve solo perfil y reglas (sin generar datos)")
+
+    model_config = {"extra": "forbid"}
+
+
+class EvaluationPlanResponse(BaseModel):
+    """Lo que se le va a evaluar a un agente: perfil + reglas + datos."""
+
+    perfil_agente: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Lo que el Juez detectó del agente (idioma, dominio, formato esperado, rigor).",
+    )
+    reglas: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Métricas/criterios que se aplicarían, con tipo, umbral y requisitos.",
+    )
+    datos: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Casos de prueba sintéticos que se usarían para evaluar (vacío si incluir_casos=False).",
+    )
+    resumen: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Conteos: nº de reglas, nº de casos, distribución por tag.",
+    )
+    nota_metodo: str = (
+        "Vista previa de solo-lectura: NO se ejecuta al agente ni se corre la "
+        "evaluación. Muestra qué reglas y qué datos se usarían si lanzas /v1/evaluate."
+    )
+
+    model_config = {"extra": "forbid"}
+
+
 class AutogenAgentHttp(BaseModel):
     url: str
     headers: Dict[str, str] = Field(default_factory=dict)

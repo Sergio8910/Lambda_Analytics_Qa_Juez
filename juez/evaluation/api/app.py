@@ -33,6 +33,8 @@ from juez.evaluation.api.schemas import (
     GenerateCasesResponse,
     AutogenEvaluateRequest,
     AutogenEvaluateResponse,
+    EvaluationPlanRequest,
+    EvaluationPlanResponse,
 )
 
 
@@ -70,6 +72,70 @@ def generate_cases_endpoint(payload: GenerateCasesRequest) -> Dict[str, Any]:
             "cases": [c.model_dump(mode="json") for c in cases],
             "n_cases": payload.n_cases,
             "seed": payload.seed,
+        }
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.errors()) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/v1/evaluation-plan", response_model=EvaluationPlanResponse)
+def evaluation_plan_endpoint(payload: EvaluationPlanRequest) -> Dict[str, Any]:
+    """Previsualiza QUÉ se le va a evaluar a un agente (reglas + datos).
+
+    Solo-lectura: NO ejecuta al agente ni corre la evaluación. Útil para que el
+    consumidor vea, antes de lanzar `/v1/evaluate`, qué reglas (métricas/umbrales)
+    se aplicarían y con qué datos (casos sintéticos) se probaría al agente.
+    """
+    try:
+        from collections import Counter
+
+        from juez.evaluation.metric_registry import METRICS
+
+        # 1) PERFIL — qué detectamos del agente a partir de su prompt.
+        profile = analyze_prompt(payload.prompt_base)
+        perfil = profile.model_dump(mode="json")
+
+        # 2) REGLAS — métricas que se aplicarían (las pedidas, o el catálogo completo).
+        nombres = payload.metrics if payload.metrics else list(METRICS.keys())
+        reglas: List[Dict[str, Any]] = []
+        for nombre in nombres:
+            md = METRICS.get(nombre)
+            if md is None:
+                reglas.append({
+                    "name": nombre,
+                    "existe": False,
+                    "nota": "Métrica desconocida; no está en el catálogo.",
+                })
+                continue
+            reglas.append({
+                "name": md.name,
+                "tipo": md.kind,
+                "umbral": md.default_threshold,
+                "requiere_contexto": md.requires_context,
+                "requiere_salida_esperada": md.requires_expected_output,
+                "existe": True,
+            })
+
+        # 3) DATOS — casos sintéticos con los que se evaluaría (opcional).
+        datos: List[Dict[str, Any]] = []
+        distribucion: Dict[str, int] = {}
+        if payload.incluir_casos:
+            cases = generate_autogen_cases(profile, n_cases=payload.n_cases, seed=payload.seed)
+            datos = [c.model_dump(mode="json") for c in cases]
+            tags = [t for c in cases for t in (c.tags or []) if t != "autogen"]
+            distribucion = dict(Counter(tags))
+
+        return {
+            "perfil_agente": perfil,
+            "reglas": reglas,
+            "datos": datos,
+            "resumen": {
+                "n_reglas": len(reglas),
+                "n_casos": len(datos),
+                "distribucion_por_tag": distribucion,
+                "metricas_personalizadas": bool(payload.metrics),
+            },
         }
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=exc.errors()) from exc
