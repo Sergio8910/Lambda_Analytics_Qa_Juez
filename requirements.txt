@@ -50,3 +50,7 @@ reportlab>=4.0.0  # PDF generation
 pymupdf>=1.24.0  # PDF inspection (artifact QA: embedded image count, structure)
 Pillow>=10.0.0   # Manipulación de imágenes (fixtures de tests del verificador, imágenes del cliente)
 langwatch>=0.5.0  # Optional LLM observability
+
+# Ingesta de información previa (datos de referencia del cliente para el Juzgado)
+openpyxl>=3.1.0   # Lectura de Excel (.xlsx)
+python-docx>=1.1.0  # Lectura de Word (.docx)

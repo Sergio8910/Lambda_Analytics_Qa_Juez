@@ -7,7 +7,7 @@ from io import BytesIO
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import ValidationError
 
 from juez.evaluation.autogen.prompt_analyzer import analyze_prompt
@@ -75,6 +75,41 @@ def generate_cases_endpoint(payload: GenerateCasesRequest) -> Dict[str, Any]:
         }
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=exc.errors()) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/v1/reference-data/ingest")
+def ingest_reference_data_endpoint(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """Recibe y analiza información previa del cliente (Excel/CSV/Word/TXT/JSON).
+
+    Es la "verdad de base" para el Juzgado: el dataset contra el cual se verifica
+    que lo que el agente maneja (ej. resultados de tools) sea verídico.
+
+    NO ejecuta nada: solo parsea el archivo a un dataset estructurado y devuelve
+    un resumen + una muestra. El dataset completo se usa luego en la evaluación.
+
+    Formatos: .xlsx, .csv, .tsv, .json, .txt, .docx
+    """
+    from juez.evaluation.reference_data import ParseError, parse_reference_file
+
+    try:
+        raw = file.file.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="El archivo está vacío.")
+        dataset = parse_reference_file(file.filename or "archivo", raw)
+        return {
+            "resumen": dataset.resumen(),
+            "columns": dataset.columns,
+            "muestra": dataset.records[:10],
+            "n_records": dataset.n_records,
+            "notas": dataset.notas,
+            "text_preview": dataset.text[:500] if dataset.text else "",
+        }
+    except ParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
