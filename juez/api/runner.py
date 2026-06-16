@@ -638,7 +638,7 @@ def run_n8n_single(
     openai_key: str = "",
     n8n_api_key: str = "",
     n8n_base_url: str = "",
-    evaluate_artifact: bool = False,
+    evaluate_artifact: bool = True,
     artifact_agent_id: str = "",
     progress_cb: Optional[Callable[[str, int], None]] = None,
 ) -> Dict[str, Any]:

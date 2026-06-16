@@ -85,7 +85,7 @@ class EvalN8nRequest(BaseModel):
     openai_key: Optional[str] = None
     n8n_api_key: Optional[str] = Field(None, description="Override de N8N_API_KEY")
     n8n_base_url: Optional[str] = Field(None, description="Override de N8N_BASE_URL (para descargas por ID)")
-    evaluate_artifact: bool = Field(False, description="Si el agente tiene spec de artefacto, dispara y evalua su salida (ej. PDF)")
+    evaluate_artifact: bool = Field(True, description="Si el agente tiene spec de artefacto, evalua su salida (ej. PDF). Por defecto activo y sintetico (no dispara el flujo real). No-op si el agente no tiene spec.")
     artifact_agent_id: Optional[str] = Field(None, description="Override del agent_id usado para buscar la spec de artefacto")
 
 

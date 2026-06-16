@@ -1,38 +1,27 @@
 {
   "agent_id": "mvp_abad_telegram",
-  "descripcion": "QA del artefacto PDF de inventario generado por Abat. Dispara el webhook generar-pdf-inventario con datos sinteticos y verifica el PDF resultante.",
+  "descripcion": "QA SINTÉTICA del PDF de inventario: genera un PDF sintético determinístico (SIN disparar el flujo n8n real) y verifica que se haya generado bien — integridad, fotos embebidas, ambientes y campos. Cero red, cero webhook, cero BD.",
   "_notas_configuracion": [
-    "contrato_id / inventario_id deben apuntar a un inventario REAL conocido (o sembrado) para que el flujo genere un PDF con contenido real.",
-    "El webhook envia el PDF por correo y NO lo retorna. Para inspeccionar el contenido configura una de estas en el evaluador: pdf_local_path, pdf_drive_file_id + GOOGLE_OAUTH_TOKEN, o que el flujo devuelva pdf_url/pdf_base64.",
-    "Para el conteo esperado de fotos define ABAT_DB_URL y ajusta db_query_fotos al esquema real de Abat. Mientras tanto usa fotos_esperadas en el config del evaluador."
+    "driver 'synthetic_pdf' construye el PDF en memoria con snapshot_factory + build_synthetic_pdf. No toca producción.",
+    "batch_id fija la semilla determinística: el mismo batch_id siempre produce el mismo PDF y el mismo snapshot esperado.",
+    "El evaluador 'synthetic_pdf' verifica el PDF contra el expected_snapshot que el driver usó (consistente), así audita la calidad de la generación.",
+    "Para auditar el PDF REAL de producción en su lugar, cambiar driver.type a 'n8n_webhook' (webhook_path 'generar-pdf-inventario') y evaluator a 'pdf_db' — eso SÍ dispara el flujo."
   ],
   "driver": {
-    "type": "n8n_webhook",
+    "type": "synthetic_pdf",
     "usar_auth": false,
     "config": {
-      "webhook_path": "generar-pdf-inventario",
-      "use_test_webhook": false,
-      "timeout_s": 180
+      "batch_id": "mvp_abad_telegram",
+      "plan_idx": 1
     }
   },
   "synthetic_input": {
-    "contrato_id": "JUEZ-TEST-0001",
-    "inventory_type": "INICIAL",
-    "inventario_id": "JUEZ-TEST-0001"
+    "contrato_id": "JUEZ-TEST-0001"
   },
   "evaluators": [
     {
-      "type": "pdf_db",
-      "config": {
-        "db_dsn_env": "ABAT_DB_URL",
-        "db_query_fotos": null,
-        "fotos_esperadas": 0,
-        "ambientes_esperados": [],
-        "campos_requeridos": [],
-        "campos_desde_input": ["contrato_id", "inventory_type"],
-        "pdf_local_path": null,
-        "pdf_drive_file_id": null
-      }
+      "type": "synthetic_pdf",
+      "config": {}
     }
   ]
 }

@@ -41,7 +41,9 @@ def make_evaluator(name: str, **cfg: Any):
 def _cargar_builtins() -> None:
     """Importa los drivers/evaluadores incluidos para que se auto-registren."""
     from .drivers import n8n_webhook  # noqa: F401
+    from .drivers import synthetic_pdf  # noqa: F401
     from .evaluators import pdf_db    # noqa: F401
+    from .evaluators import synthetic_pdf as _synthetic_pdf_eval  # noqa: F401
 
 
 _cargar_builtins()
