@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from juez.evaluation.artifact.pdf_eval import evaluate_pdf
+from juez.evaluation.artifact.pdf_eval import evaluate_pdf, render_pdf_report_txt
 
 
 def _pdf_con_texto(texto: str, *, con_imagen: bool = False) -> bytes:
@@ -58,6 +58,24 @@ def test_ambientes_presentes():
     assert res["veredicto"] == "OK"
     res2 = evaluate_pdf(pdf, ambientes=["Cocina", "Garaje"])
     assert any("Garaje" in p["descripcion"] for p in res2["problemas"])
+
+
+def test_reporte_txt_se_genera():
+    pdf = _pdf_con_texto("Contrato JUEZ-TEST-0001", con_imagen=True)
+    res = evaluate_pdf(pdf, fotos_esperadas=3, campos_requeridos=["NO-EXISTE"])
+    txt = render_pdf_report_txt(res, "inventario.pdf")
+    assert "EVALUACIÓN DE PDF" in txt
+    assert "Veredicto" in txt and res["veredicto"] in txt
+    assert "inventario.pdf" in txt
+    assert "Fotos esperadas" in txt
+    assert "Problemas detectados" in txt
+    assert "Faltan" in txt  # el problema de fotos faltantes aparece en el TXT
+
+
+def test_reporte_txt_sin_problemas():
+    pdf = _pdf_con_texto("Documento limpio")
+    txt = render_pdf_report_txt(evaluate_pdf(pdf), "ok.pdf")
+    assert "Sin problemas detectados" in txt
 
 
 def test_conteo_fotos_detecta_faltantes():

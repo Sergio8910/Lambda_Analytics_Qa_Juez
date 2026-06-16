@@ -17,6 +17,61 @@ from .protocol import Issue
 # Severidades ordenadas para decidir el veredicto.
 _SEV_RANK = {"CRITICO": 3, "ALTO": 2, "MEDIO": 1, "BAJO": 0}
 
+_LINEA = "=" * 70
+
+
+def render_pdf_report_txt(resultado: Dict[str, Any], source_name: str = "") -> str:
+    """Renderiza el resultado de `evaluate_pdf` como reporte TXT legible.
+
+    Mismo estilo que el resto de reportes del Juez (cabecera con '='), listo
+    para guardar en outputs/ o devolver en la respuesta del API.
+    """
+    L: List[str] = []
+    L.append(_LINEA)
+    L.append("  EVALUACIÓN DE PDF (artefacto generado)")
+    L.append(_LINEA)
+    if source_name:
+        L.append(f"  Archivo            : {source_name}")
+    L.append(f"  Veredicto          : {resultado.get('veredicto', '?')}")
+    L.append(f"  Score              : {resultado.get('score_global', 0.0):.1f}/100")
+
+    met = resultado.get("metricas", {})
+    if met:
+        L.append("")
+        L.append("  Métricas:")
+        if "paginas" in met:
+            L.append(f"     Páginas           : {met['paginas']}")
+        if "fotos_esperadas" in met or "fotos_embebidas" in met:
+            L.append(f"     Fotos esperadas   : {met.get('fotos_esperadas', '?')}")
+            L.append(f"     Fotos embebidas   : {met.get('fotos_embebidas', '?')}")
+        if met.get("ambientes_faltantes"):
+            L.append(f"     Ambientes faltantes: {', '.join(map(str, met['ambientes_faltantes']))}")
+        if met.get("campos_faltantes"):
+            L.append(f"     Campos faltantes  : {', '.join(map(str, met['campos_faltantes']))}")
+
+    L.append("")
+    L.append("  Chequeos:")
+    for c in resultado.get("checks", []):
+        L.append(f"     - {c.get('check'):<20} score {c.get('score', 0.0):.2f}")
+
+    problemas = resultado.get("problemas", [])
+    if problemas:
+        L.append("")
+        L.append("  Problemas detectados:")
+        for p in problemas:
+            L.append(f"     [{p.get('severidad')}] {p.get('descripcion')}")
+    else:
+        L.append("")
+        L.append("  Sin problemas detectados.")
+
+    nota = resultado.get("nota_metodo")
+    if nota:
+        L.append("")
+        L.append(f"  Nota: {nota}")
+
+    L.append(_LINEA)
+    return "\n".join(L)
+
 
 def evaluate_pdf(
     blob: bytes,

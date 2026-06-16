@@ -139,7 +139,7 @@ def evaluate_pdf_endpoint(
     Devuelve score_global (0-100), veredicto (OK/WARN/FAIL/UNVERIFIABLE),
     el detalle por chequeo, problemas y métricas (páginas, fotos embebidas...).
     """
-    from juez.evaluation.artifact.pdf_eval import evaluate_pdf
+    from juez.evaluation.artifact.pdf_eval import evaluate_pdf, render_pdf_report_txt
 
     try:
         blob = file.file.read()
@@ -158,6 +158,25 @@ def evaluate_pdf_endpoint(
             campos_requeridos=campos,
         )
         resultado["source_name"] = file.filename
+
+        # Genera el reporte TXT (igual que el resto del Juez) y lo guarda en outputs/.
+        reporte_txt = render_pdf_report_txt(resultado, file.filename or "")
+        resultado["reporte_txt"] = reporte_txt
+        try:
+            from datetime import datetime, timezone
+            from pathlib import Path
+
+            out_dir = Path("outputs")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            base = "".join(c if c.isalnum() else "_" for c in (file.filename or "pdf"))[:40]
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            out_path = out_dir / f"pdf_eval_{base}_{ts}.txt"
+            out_path.write_text(reporte_txt, encoding="utf-8")
+            resultado["reporte_path"] = str(out_path)
+        except Exception as exc:  # guardar es best-effort; no rompe la evaluación
+            resultado["reporte_path"] = None
+            resultado.setdefault("notas", []).append(f"No se pudo guardar el TXT: {exc}")
+
         return resultado
     except HTTPException:
         raise
