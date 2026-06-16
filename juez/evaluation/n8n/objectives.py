@@ -250,32 +250,55 @@ def _param_present(raw_parameters: Dict[str, Any], token: str) -> bool:
     return False
 
 
-def _matches_objective(node: Any, obj: Objective, spec: _KindSpec) -> bool:
-    """¿El nodo es candidato a cumplir el objetivo? (solo lectura, sin ejecutar)."""
-    node_type = node.node_type.lower()
+def _passes_param_contains(node: Any, obj: Objective) -> bool:
+    """¿El nodo satisface los substrings de parámetros exigidos por el objetivo?"""
+    if not obj.param_contains:
+        return True
     blob = _node_param_blob(node.raw_parameters)
+    return all(tok.lower() in blob for tok in obj.param_contains)
 
-    # 1) ¿Match por tipo de nodo? (tokens del kind + overrides del objetivo)
-    type_tokens = list(spec.type_tokens) + [t.lower() for t in obj.node_type_contains]
-    type_match = any(tok in node_type for tok in type_tokens) if type_tokens else False
 
-    # 2) ¿Match por contenido de parámetros? (tokens del kind)
-    param_token_match = any(tok in blob for tok in spec.param_tokens) if spec.param_tokens else False
-
-    # Para 'ai_response' la categoría ya clasificada también vale.
+def _matches_by_type(node: Any, obj: Objective, spec: _KindSpec) -> bool:
+    """Match PRECISO: el tipo de nodo corresponde al objetivo."""
     if obj.kind == "ai_response" and node.category == "ai":
-        type_match = True
+        return True
+    node_type = node.node_type.lower()
+    type_tokens = list(spec.type_tokens) + [t.lower() for t in obj.node_type_contains]
+    return any(tok in node_type for tok in type_tokens) if type_tokens else False
 
-    candidate = type_match or param_token_match
-    if not candidate:
+
+def _matches_by_param_tokens(node: Any, spec: _KindSpec) -> bool:
+    """Match AMPLIO (fallback): los parámetros mencionan tokens del kind.
+
+    Es ruidoso (un nodo de email que adjunta un PDF mencionaría 'pdf'), por eso
+    solo se usa cuando NINGÚN nodo matchea por tipo.
+    """
+    if not spec.param_tokens:
         return False
+    blob = _node_param_blob(node.raw_parameters)
+    return any(tok in blob for tok in spec.param_tokens)
 
-    # 3) Si el objetivo exige substrings de parámetros, TODOS deben estar.
+
+def _select_matches(nodes: List[Any], obj: Objective, spec: _KindSpec) -> List[Any]:
+    """Selecciona los nodos candidatos al objetivo, priorizando precisión.
+
+    Orden de preferencia (se usa el primero que dé resultados):
+      1. Match por TIPO de nodo (preciso) — ej. emailSend para enviar_correo.
+      2. Si el objetivo declaró `param_contains`, eso ya es un match explícito
+         por contenido pedido por el usuario.
+      3. Fallback amplio por `param_tokens` del kind (solo si no hubo nada arriba).
+    """
+    elegibles = [n for n in nodes if _passes_param_contains(n, obj)]
+
+    por_tipo = [n for n in elegibles if _matches_by_type(n, obj, spec)]
+    if por_tipo:
+        return por_tipo
+
     if obj.param_contains:
-        if not all(tok.lower() in blob for tok in obj.param_contains):
-            return False
+        # `elegibles` ya satisface param_contains: ese es el match explícito.
+        return elegibles
 
-    return True
+    return [n for n in elegibles if _matches_by_param_tokens(n, spec)]
 
 
 def _config_findings(node: Any, obj: Objective, spec: _KindSpec) -> Tuple[List[N8nFinding], bool, bool]:
@@ -376,7 +399,7 @@ def _reachable_set(graph: Any) -> Tuple[set, bool]:
 
 def _check_one(obj: Objective, nodes: List[Any], reachable: set, hay_triggers: bool) -> ObjectiveCheck:
     spec = KIND_SPECS.get(obj.kind, KIND_SPECS["custom"])
-    matches = [n for n in nodes if _matches_objective(n, obj, spec)]
+    matches = _select_matches(nodes, obj, spec)
     enabled = [n for n in matches if not n.disabled]
     # Si no hay triggers detectados, no podemos juzgar alcanzabilidad → tratamos
     # a los habilitados como alcanzables (y el análisis estático ya flagea el
