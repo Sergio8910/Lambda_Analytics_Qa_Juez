@@ -7,7 +7,7 @@ from io import BytesIO
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import ValidationError
 
 from juez.evaluation.autogen.prompt_analyzer import analyze_prompt
@@ -117,6 +117,48 @@ def ingest_reference_data_endpoint(file: UploadFile = File(...)) -> Dict[str, An
         }
     except ParseError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/v1/evaluate/pdf")
+def evaluate_pdf_endpoint(
+    file: UploadFile = File(..., description="El PDF a evaluar"),
+    fotos_esperadas: int = Form(0, description="Nº de imágenes embebidas esperadas (0 = no chequear)"),
+    ambientes: str = Form("", description="Nombres separados por coma que deben aparecer en el PDF"),
+    campos_requeridos: str = Form("", description="Cadenas separadas por coma que deben aparecer (ej. contrato_id)"),
+) -> Dict[str, Any]:
+    """Evalúa un PDF de forma AUTÓNOMA — subes el archivo y se evalúa solo.
+
+    Sin BD, sin Drive, sin spec por-agente: la inspección corre directo sobre
+    los bytes del PDF. Verifica integridad, conteo de imágenes embebidas y
+    presencia de ambientes/campos en el texto.
+
+    Devuelve score_global (0-100), veredicto (OK/WARN/FAIL/UNVERIFIABLE),
+    el detalle por chequeo, problemas y métricas (páginas, fotos embebidas...).
+    """
+    from juez.evaluation.artifact.pdf_eval import evaluate_pdf
+
+    try:
+        blob = file.file.read()
+        if not blob:
+            raise HTTPException(status_code=400, detail="El archivo está vacío.")
+        nombre = (file.filename or "").lower()
+        if not (nombre.endswith(".pdf") or blob[:5] == b"%PDF-"):
+            raise HTTPException(status_code=400, detail="El archivo no parece un PDF.")
+
+        amb = [a.strip() for a in ambientes.split(",") if a.strip()]
+        campos = [c.strip() for c in campos_requeridos.split(",") if c.strip()]
+        resultado = evaluate_pdf(
+            blob,
+            fotos_esperadas=fotos_esperadas,
+            ambientes=amb,
+            campos_requeridos=campos,
+        )
+        resultado["source_name"] = file.filename
+        return resultado
     except HTTPException:
         raise
     except Exception as exc:
