@@ -453,9 +453,24 @@ def _check_one(obj: Objective, nodes: List[Any], reachable: set, hay_triggers: b
             reachable_nodes=[], findings=findings,
         )
 
-    # Caso 4: hay un nodo alcanzable. Revisamos su configuración.
-    candidato = reachable_nodes[0]
-    cfg_findings, falta_config, falta_creds = _config_findings(candidato, obj, spec)
+    # Caso 4: hay nodos alcanzables. El objetivo se cumple si AL MENOS UNO está
+    # bien configurado (no el primero que aparezca). Esto evita falsos negativos
+    # cuando hay varios nodos del mismo tipo (ej. Telegram: nodos de descarga +
+    # el de envío real) — solo uno necesita cumplir la config del objetivo.
+    evaluaciones = [
+        (_config_findings(n, obj, spec), n) for n in reachable_nodes
+    ]
+    # Preferimos: 1) un nodo totalmente OK, 2) uno con config OK (creds puede
+    # faltar), 3) el primero como fallback.
+    elegido = next(
+        ((cf, n) for cf, n in evaluaciones if not cf[1] and not cf[2]), None
+    )
+    if elegido is None:
+        elegido = next(((cf, n) for cf, n in evaluaciones if not cf[1]), None)
+    if elegido is None:
+        elegido = evaluaciones[0]
+
+    (cfg_findings, falta_config, falta_creds), candidato = elegido
     findings.extend(cfg_findings)
 
     if falta_config:
