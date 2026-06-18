@@ -19,6 +19,7 @@ from juez.api.schemas_v1 import (
     JobCreatedResponse,
     JobListResponse,
     JobStatusResponse,
+    N8nFailurePayload,
     VerifyObjectivesRequest,
 )
 
@@ -166,6 +167,38 @@ def evaluate_pipeline(req: EvalPipelineRequest) -> Dict[str, Any]:
     return {
         "job_id": job_id,
         "kind": "pipeline",
+        "status": "queued",
+        "created_at": job["created_at"],
+        "poll_url": f"/api/v1/evaluate/{job_id}",
+    }
+
+
+# =============================================================================
+# EVALUACIÓN 24/7 — recibe el fallo de n8n y genera el reporte
+# =============================================================================
+
+
+@router.post("/evaluate/on-failure", response_model=JobCreatedResponse, status_code=202)
+def evaluate_on_failure(payload: N8nFailurePayload) -> Dict[str, Any]:
+    """Recibe el payload del Error Workflow de n8n cuando un flujo falla.
+
+    Lo llama el nodo HTTP del flujo 'Servicio_de_notificaciones_general'
+    (errorTrigger). El Juez descarga el flujo que falló, lo evalúa (análisis
+    estático + QA de artefacto sintético, sin disparar nada) y genera un reporte
+    TXT con el contexto del fallo. Responde de inmediato (202) para no bloquear
+    el flujo de notificaciones; el reporte se guarda en outputs/.
+    """
+    from juez.api.failure_eval import run_on_failure
+
+    store = get_store()
+    raw = payload.model_dump(mode="json")
+    job = store.create(kind="failure", params=raw)
+    job_id = job["job_id"]
+    store.run_in_thread(job_id, run_on_failure, payload=raw)
+
+    return {
+        "job_id": job_id,
+        "kind": "failure",
         "status": "queued",
         "created_at": job["created_at"],
         "poll_url": f"/api/v1/evaluate/{job_id}",

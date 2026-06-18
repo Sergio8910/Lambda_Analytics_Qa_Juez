@@ -110,7 +110,7 @@ class EvalPipelineRequest(BaseModel):
 
 
 JobStatus = Literal["queued", "running", "completed", "failed"]
-JobKind = Literal["elevenlabs", "n8n", "pipeline"]
+JobKind = Literal["elevenlabs", "n8n", "pipeline", "failure"]
 
 
 class JobCreatedResponse(BaseModel):
@@ -182,6 +182,19 @@ class ObjectiveInput(BaseModel):
     requires_credentials: Optional[bool] = None
     min_count: int = Field(1, ge=1)
     severity_if_missing: Literal["critical", "high", "medium", "low", "info"] = "high"
+
+
+class N8nFailurePayload(BaseModel):
+    """Payload del Error Workflow de n8n (errorTrigger) que llega al Juez.
+
+    Permisivo a propósito: el shape varía entre versiones de n8n. Solo se leen
+    `execution` y `workflow` de forma tolerante.
+    """
+
+    execution: Optional[Dict[str, Any]] = Field(None, description="Datos de la ejecución fallida (id, url, error, lastNodeExecuted)")
+    workflow: Optional[Dict[str, Any]] = Field(None, description="Datos del flujo que falló (id, name; opcionalmente nodes)")
+
+    model_config = {"extra": "allow"}
 
 
 class VerifyObjectivesRequest(BaseModel):
