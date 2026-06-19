@@ -1,0 +1,28 @@
+{
+  "interval_seconds": 3600,
+  "output_dir": "outputs/monitoring",
+  "targets": [
+    {
+      "kind": "n8n",
+      "name": "create_pdf_send_email",
+      "workflow_id": "5nj33EwpejCD8vSx",
+      "mode": "lightweight",
+      "objetivos": [
+        {"id": "generar_pdf", "descripcion": "Generar el PDF", "kind": "generate_file"},
+        {"id": "enviar_correo", "descripcion": "Enviar el PDF por correo", "kind": "send_email"},
+        {"id": "guardar_db", "descripcion": "Persistir en base de datos", "kind": "db_write"}
+      ]
+    },
+    {
+      "kind": "n8n",
+      "name": "mvp_abad_telegram",
+      "workflow_id": "81T3Lix00oy0G7uT",
+      "mode": "lightweight",
+      "objetivos": [
+        {"id": "responder_telegram", "descripcion": "Responder por Telegram", "kind": "send_message"},
+        {"id": "respuesta_ia", "descripcion": "Generar respuesta con IA", "kind": "ai_response"},
+        {"id": "guardar_db", "descripcion": "Persistir datos", "kind": "db_write"}
+      ]
+    }
+  ]
+}
