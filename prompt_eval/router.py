@@ -15,6 +15,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Header, HTTPException
 
+from .conversation import ConversationInput
 from .evaluator import evaluate_prompt
 from .models import (
     DIMENSION_WEIGHTS,
@@ -76,6 +77,31 @@ def evaluate(
     """
     _require_api_key(x_api_key)
     return evaluate_prompt(req)
+
+
+@router.post("/prompt_eval/evaluate-conversation")
+def evaluate_conversation_endpoint(
+    conv: ConversationInput,
+    incluir_llm: bool = True,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Dict[str, Any]:
+    """Evalúa una CONVERSACIÓN (transcript ya ocurrido) del agente.
+
+    Recibe el JSON de la conversación (agent_role, turns, metadata...) y evalúa
+    de forma INDEPENDIENTE el desempeño del agente: chequeos determinísticos
+    sobre los turnos + LLM-as-judge (si hay OPENAI_API_KEY) sobre su rol y
+    conductas. El `prompt_adherence` auto-reportado NO se toma como verdad.
+
+    Devuelve `score_global`, `veredicto`, dimensiones del LLM, criterios
+    determinísticos, hallazgos, métricas y un `reporte_txt`.
+    """
+    _require_api_key(x_api_key)
+    from .conversation import evaluate_conversation, render_conversation_report
+
+    res = evaluate_conversation(conv, incluir_llm=incluir_llm)
+    out = res.model_dump(mode="json")
+    out["reporte_txt"] = render_conversation_report(res)
+    return out
 
 
 @router.get("/prompt_eval/rules")
