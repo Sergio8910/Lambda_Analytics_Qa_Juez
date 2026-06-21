@@ -12,6 +12,10 @@ donde `tipo` debe estar mapeado a una dimensión en el TIPO_A_DIMENSION
 correspondiente del evaluador que invoca.
 """
 from .alignment import check_tool_prompt_alignment
-from .tool_security import check_tool_security
+from .tool_security import check_tool_security, check_tool_security_eleven
 
-__all__ = ["check_tool_prompt_alignment", "check_tool_security"]
+__all__ = [
+    "check_tool_prompt_alignment",
+    "check_tool_security",
+    "check_tool_security_eleven",
+]

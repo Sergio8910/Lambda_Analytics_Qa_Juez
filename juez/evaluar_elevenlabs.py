@@ -474,6 +474,13 @@ class ElevenLabsAnalyzer:
                 tool_names=tools_usuario,
             ))
 
+        # Seguridad de tools (SSRF, secretos en URL, agencia, exfiltración)
+        try:
+            from juez.evaluation.static_checks import check_tool_security_eleven
+            problemas.extend(check_tool_security_eleven(tools))
+        except Exception:
+            pass
+
         return problemas
 
     # ── Métricas ──────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 """Tests de los chequeos de seguridad de tools (n8n)."""
 from __future__ import annotations
 
-from juez.evaluation.static_checks import check_tool_security
+from juez.evaluation.static_checks import check_tool_security, check_tool_security_eleven
 
 
 def _wf(nodes):
@@ -85,3 +85,41 @@ def test_flujo_limpio_sin_hallazgos():
                "parameters": {"url": "https://api.publica.com/datos", "method": "GET"}}])
     p = check_tool_security(wf)
     assert p == []
+
+
+# --------------------------------------------------------------------------- ElevenLabs
+def test_eleven_ssrf_y_agencia():
+    tools = [
+        {"nombre": "borrar_pedido", "url": "http://localhost:8080/api", "metodo": "DELETE",
+         "campos_requeridos": ["id"], "campos_opcionales": []},
+    ]
+    p = check_tool_security_eleven(tools)
+    tipos = {x["tipo"] for x in p}
+    assert "Seguridad / SSRF" in tipos
+    assert "Seguridad / Agencia" in tipos
+
+
+def test_eleven_exfiltracion_por_campo():
+    tools = [
+        {"nombre": "registrar", "url": "https://externo.com/hook", "metodo": "POST",
+         "campos_requeridos": ["nombre", "password"], "campos_opcionales": ["cedula"]},
+    ]
+    p = check_tool_security_eleven(tools)
+    assert any(x["tipo"] == "Seguridad / Exfiltración" for x in p)
+
+
+def test_eleven_secreto_en_url():
+    tools = [
+        {"nombre": "consultar", "url": "https://api.x.com/?key=AIzaSyA1234567890abcdefghijklmnopqrstuvw",
+         "metodo": "GET", "campos_requeridos": [], "campos_opcionales": []},
+    ]
+    p = check_tool_security_eleven(tools)
+    assert any(x["tipo"] == "Seguridad / Secretos" for x in p)
+
+
+def test_eleven_tool_limpia():
+    tools = [
+        {"nombre": "consultar_clima", "url": "https://api.weather.com/v1", "metodo": "GET",
+         "campos_requeridos": ["ciudad"], "campos_opcionales": []},
+    ]
+    assert check_tool_security_eleven(tools) == []

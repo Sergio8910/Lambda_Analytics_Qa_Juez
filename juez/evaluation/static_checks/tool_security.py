@@ -174,3 +174,54 @@ def check_tool_security(workflow: Dict[str, Any]) -> List[Dict[str, str]]:
                     break
 
     return problemas
+
+
+def check_tool_security_eleven(tools: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """Chequeos de seguridad sobre las tools (webhooks) de un agente ElevenLabs.
+
+    `tools` es la lista normalizada de `_tools()` de evaluar_elevenlabs: cada
+    tool trae `nombre`, `url`, `metodo`, `campos_requeridos`, `campos_opcionales`.
+    Reusa los mismos patrones que el chequeo de n8n. (La detección de credenciales
+    hardcodeadas en el body ya la hace evaluar_elevenlabs; aquí cubrimos SSRF,
+    secretos en la URL, agencia excesiva y exfiltración por nombre de campo.)
+    """
+    problemas: List[Dict[str, str]] = []
+    for t in tools or []:
+        if not isinstance(t, dict):
+            continue
+        name = str(t.get("nombre") or "(sin nombre)")
+        url = str(t.get("url") or "")
+        metodo = str(t.get("metodo") or "").upper()
+
+        # SSRF / URL peligrosa
+        for patron, etiqueta, sev in _SSRF_PATTERNS:
+            if re.search(patron, url, re.IGNORECASE):
+                problemas.append(_mk(
+                    "Seguridad / SSRF", f"La tool apunta a un destino peligroso: {etiqueta}.",
+                    name, sev))
+                break
+
+        # Secreto embebido en la URL
+        for patron, etiqueta in _SECRET_PATTERNS:
+            if re.search(patron, url):
+                problemas.append(_mk(
+                    "Seguridad / Secretos", f"Secreto hardcodeado en la URL de la tool: {etiqueta}.",
+                    name, "ALTO"))
+                break
+
+        # Excesiva agencia: método destructivo
+        if metodo == "DELETE":
+            problemas.append(_mk(
+                "Seguridad / Agencia", "La tool usa una operación HTTP destructiva (DELETE).",
+                name, "MEDIO"))
+
+        # Exfiltración: la tool recoge/envía campos sensibles a un webhook externo
+        campos = [str(c).lower() for c in (t.get("campos_requeridos", []) + t.get("campos_opcionales", []))]
+        sensibles = [c for c in campos if any(term in c for term in _EXFIL_TERMS)]
+        if sensibles and url.startswith("http"):
+            problemas.append(_mk(
+                "Seguridad / Exfiltración",
+                f"La tool envía campos sensibles ({', '.join(sorted(set(sensibles)))}) a un webhook externo.",
+                name, "MEDIO"))
+
+    return problemas
