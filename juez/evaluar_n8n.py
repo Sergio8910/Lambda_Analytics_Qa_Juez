@@ -967,7 +967,26 @@ class N8nAnalyzer:
         # Problemas de alineación tool ↔ prompt
         problemas.extend(self._alineacion_tools_prompt())
 
+        # Problemas de seguridad de tools (código peligroso, SSRF, exfiltración…)
+        problemas.extend(self._seguridad_tools())
+
         return problemas
+
+    # ── Seguridad de tools ────────────────────────────────────────────────────
+
+    def _seguridad_tools(self) -> List[Dict[str, Any]]:
+        """Chequeos de seguridad sobre los nodos/tools del flow.
+
+        Delegado a `evaluation.static_checks.tool_security` (reusable). Detecta
+        código peligroso, secretos hardcodeados, SSRF, exfiltración, agencia
+        excesiva y prompt injection — sin ejecutar nada.
+        """
+        from juez.evaluation.static_checks import check_tool_security
+
+        try:
+            return check_tool_security(self.wf)
+        except Exception:
+            return []
 
     # ── Alineación tools ↔ prompt ─────────────────────────────────────────────
 

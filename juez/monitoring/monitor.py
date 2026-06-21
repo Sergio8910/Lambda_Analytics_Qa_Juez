@@ -79,6 +79,14 @@ def _evaluate_n8n(target: MonitorTarget) -> Dict[str, Any]:
     except Exception as exc:
         artef = {"error": str(exc)}
 
+    # Seguridad de tools (código peligroso, SSRF, exfiltración, prompt injection…)
+    seguridad = []
+    try:
+        from juez.evaluation.static_checks import check_tool_security
+        seguridad = check_tool_security(wf)
+    except Exception:
+        seguridad = []
+
     score = round(analysis.scorecard.overall * 100, 1)
     return {
         "score": score,
@@ -86,6 +94,7 @@ def _evaluate_n8n(target: MonitorTarget) -> Dict[str, Any]:
         "analysis": analysis,
         "objetivos": obj_report,
         "artefacto": artef,
+        "seguridad": seguridad,
         "workflow_name": wf.get("name", target.name),
     }
 
@@ -115,6 +124,13 @@ def _render_n8n(target: MonitorTarget, res: Dict[str, Any], ts_iso: str) -> str:
     if artef and not artef.get("error"):
         L.append("")
         L.append(f"  QA de PDF (sintético): score {artef.get('score_artefacto')}/100, problemas {len(artef.get('problemas', []))}")
+
+    seguridad = res.get("seguridad") or []
+    if seguridad:
+        L.append("")
+        L.append(f"  Seguridad de tools  : {len(seguridad)} hallazgo(s)")
+        for s in seguridad[:8]:
+            L.append(f"     [{s.get('severidad')}] {s.get('tipo')}: {s.get('descripcion')} ({s.get('nodo')})")
     L.append(_L)
     return "\n".join(L)
 
