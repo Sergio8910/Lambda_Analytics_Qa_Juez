@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from juez.evaluation.autogen.prompt_analyzer import analyze_prompt
 from juez.evaluation.autogen.context_synth import synthesize_context
@@ -119,6 +119,33 @@ def ingest_reference_data_endpoint(file: UploadFile = File(...)) -> Dict[str, An
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
         raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+class GenerateScenariosRequest(BaseModel):
+    sector: str
+    caso_de_uso: str
+    objetivo: str
+    medio: str = "chat"  # chat | llamada
+    n_escenarios: int = 8
+
+    model_config = {"extra": "forbid"}
+
+
+@app.post("/v1/generate-scenarios")
+def generate_scenarios_endpoint(payload: GenerateScenariosRequest) -> Dict[str, Any]:
+    """Genera con IA una lista de escenarios de evaluación desde el contexto de negocio."""
+    from juez.evaluation.autogen.scenario_gen import generate_scenarios
+
+    try:
+        escenarios = generate_scenarios(
+            payload.sector, payload.caso_de_uso, payload.objetivo,
+            payload.medio, payload.n_escenarios,
+        )
+        return {"escenarios": escenarios, "n": len(escenarios)}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
