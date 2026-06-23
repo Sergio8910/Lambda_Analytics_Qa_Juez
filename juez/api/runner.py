@@ -640,6 +640,7 @@ def run_n8n_single(
     n8n_base_url: str = "",
     evaluate_artifact: bool = True,
     artifact_agent_id: str = "",
+    modo_qa: str = "ambos",
     progress_cb: Optional[Callable[[str, int], None]] = None,
 ) -> Dict[str, Any]:
     """Evalúa un único flujo n8n.
@@ -717,6 +718,11 @@ def run_n8n_single(
                     analisis.setdefault("problemas", []).extend(artef.get("problemas", []))
             except Exception as exc:
                 artef = {"error": str(exc)}
+
+        # Modo QA: filtra los hallazgos a técnico / funcional antes de puntuar.
+        if modo_qa and modo_qa != "ambos":
+            from juez.evaluation.qa_mode import filtrar_problemas
+            analisis["problemas"] = filtrar_problemas(analisis.get("problemas", []), modo_qa)
 
         progress("Calculando scores", 88)
         scores = mod.calcular_score_n8n(analisis, batch_result)

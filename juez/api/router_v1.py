@@ -125,6 +125,7 @@ def evaluate_n8n(req: EvalN8nRequest) -> Dict[str, Any]:
         n8n_base_url=req.n8n_base_url or "",
         evaluate_artifact=req.evaluate_artifact,
         artifact_agent_id=req.artifact_agent_id or "",
+        modo_qa=req.modo_qa,
     )
 
     return {
