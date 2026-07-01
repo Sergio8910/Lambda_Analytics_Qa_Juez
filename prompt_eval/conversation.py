@@ -59,6 +59,13 @@ class ConversationInput(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class QAAgentRequest(BaseModel):
+    agent_name: str = Field("(agente)")
+    conversations: List[ConversationInput] = Field(default_factory=list)
+    incluir_llm: bool = True
+    model_config = {"extra": "allow"}
+
+
 class CriterioResult(BaseModel):
     nombre: str
     cumple: Optional[bool] = None  # None = no determinable sin LLM
@@ -311,6 +318,59 @@ def evaluate_conversation(conv: ConversationInput, *, incluir_llm: bool = True) 
 # =============================================================================
 
 _L = "=" * 70
+
+
+def evaluate_agent_conversations(
+    agent_name: str, conversations: List["ConversationInput"], *, incluir_llm: bool = True
+) -> Dict[str, Any]:
+    """QA de un agente sobre VARIAS transcripciones. Reusa evaluate_conversation."""
+    from collections import Counter
+
+    results = [evaluate_conversation(c, incluir_llm=incluir_llm) for c in conversations]
+    if not results:
+        return {"agent_name": agent_name, "n_conversaciones": 0, "score_promedio": 0.0,
+                "veredicto": "critico", "por_conversacion": [], "hallazgos_recurrentes": []}
+
+    scores = [r.score_global for r in results]
+    prom = round(sum(scores) / len(scores), 1)
+    dist = Counter(r.veredicto for r in results)
+    msgs = Counter(f.mensaje for r in results for f in r.findings if f.mensaje)
+
+    return {
+        "agent_name": agent_name,
+        "n_conversaciones": len(results),
+        "score_promedio": prom,
+        "veredicto": _veredicto(prom),
+        "distribucion_veredictos": dict(dist),
+        "hallazgos_recurrentes": [{"mensaje": m, "veces": n} for m, n in msgs.most_common(5)],
+        "por_conversacion": [
+            {"conversation_id": r.conversation_id, "score": r.score_global, "veredicto": r.veredicto}
+            for r in results
+        ],
+        "detalle": [r.model_dump(mode="json") for r in results],
+    }
+
+
+def render_agent_qa_report_txt(qa: Dict[str, Any]) -> str:
+    L = [_L, "  QA DE AGENTE POR TRANSCRIPCIONES", "  Lambda Analytics — Juez", _L]
+    L.append(f"  Agente             : {qa.get('agent_name')}")
+    L.append(f"  Conversaciones     : {qa.get('n_conversaciones')}")
+    L.append(f"  Score promedio     : {qa.get('score_promedio')}/100  ({qa.get('veredicto','').upper()})")
+    dist = qa.get("distribucion_veredictos") or {}
+    if dist:
+        L.append("  Distribución       : " + ", ".join(f"{k}={v}" for k, v in dist.items()))
+    rec = qa.get("hallazgos_recurrentes") or []
+    if rec:
+        L.append("")
+        L.append("  Problemas recurrentes:")
+        for h in rec:
+            L.append(f"     ({h['veces']}x) {h['mensaje']}")
+    L.append("")
+    L.append("  Por conversación:")
+    for c in qa.get("por_conversacion", []):
+        L.append(f"     [{c['veredicto']}] {c['conversation_id']}: {c['score']}/100")
+    L.append(_L)
+    return "\n".join(L)
 
 
 def render_conversation_report(res: ConversationEvalResult) -> str:

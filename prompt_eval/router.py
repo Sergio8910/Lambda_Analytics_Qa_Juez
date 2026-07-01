@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Header, HTTPException
 
-from .conversation import ConversationInput
+from .conversation import ConversationInput, QAAgentRequest
 from .evaluator import evaluate_prompt
 from .models import (
     DIMENSION_WEIGHTS,
@@ -102,6 +102,28 @@ def evaluate_conversation_endpoint(
     out = res.model_dump(mode="json")
     out["reporte_txt"] = render_conversation_report(res)
     return out
+
+
+@router.post("/prompt_eval/qa-agent")
+def qa_agent_endpoint(
+    payload: QAAgentRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Dict[str, Any]:
+    """QA de un agente a partir de VARIAS transcripciones/conversaciones.
+
+    Recibe el nombre del agente y una lista de conversaciones (mismo formato que
+    /prompt_eval/evaluate-conversation) y analiza si el agente ha estado
+    respondiendo bien: score promedio, veredicto global, problemas recurrentes y
+    el detalle por conversación. Reusa el evaluador de conversación por debajo.
+    """
+    _require_api_key(x_api_key)
+    from .conversation import evaluate_agent_conversations, render_agent_qa_report_txt
+
+    qa = evaluate_agent_conversations(
+        payload.agent_name, payload.conversations, incluir_llm=payload.incluir_llm
+    )
+    qa["reporte_txt"] = render_agent_qa_report_txt(qa)
+    return qa
 
 
 @router.get("/prompt_eval/rules")
