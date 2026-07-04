@@ -29,7 +29,7 @@ from ..schemas import (
     Verdict,
 )
 from . import register_inspector
-from .base import BaseInspector, InspectorError
+from .base import InspectorError
 
 log = logging.getLogger("verificador.inspectors.pdf")
 

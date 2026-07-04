@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 import re
 
-from .report_models import ContraAgentSpec, RagConfig, TaskContract, TestCase
+from .report_models import ContraAgentSpec, TaskContract, TestCase
 
 
 @dataclass(frozen=True)

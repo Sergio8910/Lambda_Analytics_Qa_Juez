@@ -20,10 +20,8 @@ from .evaluator import evaluate_prompt
 from .models import (
     DIMENSION_WEIGHTS,
     SEVERITY_PENALTY,
-    Dimension,
     PromptEvalRequest,
     PromptEvalResult,
-    Severity,
 )
 from .rules import ALL_RULES
 from .settings import settings

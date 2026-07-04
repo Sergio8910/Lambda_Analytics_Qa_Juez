@@ -13,13 +13,9 @@ import contextlib
 from decimal import Decimal, ROUND_HALF_UP
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from deepeval.metrics import (
-    AnswerRelevancyMetric,
-    FaithfulnessMetric,
-    ContextualPrecisionMetric,
-    HallucinationMetric,
     GEval,
 )
 from deepeval.test_case import LLMTestCase, LLMTestCaseParams
@@ -282,7 +278,6 @@ def _metric_worker(payload: Dict[str, Any], queue: mp.Queue) -> None:
             for _logger_name in ("openai", "openai._base_client", "httpx", "httpcore"):
                 logging.getLogger(_logger_name).setLevel(logging.WARNING)
         from deepeval.metrics import (
-            AnswerRelevancyMetric,
             FaithfulnessMetric,
             ContextualPrecisionMetric,
             HallucinationMetric,

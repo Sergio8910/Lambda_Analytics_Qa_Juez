@@ -8,7 +8,7 @@ from uuid import UUID
 import logging
 from sqlalchemy.orm import Session
 
-from juez.evaluation.control_plane.models import Job, JobKindEnum, JobStatusEnum
+from juez.evaluation.control_plane.models import JobKindEnum, JobStatusEnum
 from juez.evaluation.control_plane.registry import JobRegistry
 from juez.evaluation.execution.tasks import (
     run_functional_eval,
@@ -129,7 +129,6 @@ class JobOrchestrator:
         if not job:
             raise ValueError(f"Job not found: {job_id}")
         
-        from juez.evaluation.execution.celery_app import app as celery_app
         
         status_info = {
             "job_id": str(job.job_id),
@@ -176,7 +175,6 @@ class JobOrchestrator:
     
     def get_worker_stats(self, queue: Optional[str] = None) -> Dict[str, Any]:
         """Get worker statistics"""
-        from juez.evaluation.execution.celery_app import app as celery_app
         
         stats = app.control.inspect().stats()
         

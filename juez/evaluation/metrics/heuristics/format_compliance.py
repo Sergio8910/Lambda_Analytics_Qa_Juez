@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 from ...core.models import NormalizedRun
 from ...report_models import MetricResult

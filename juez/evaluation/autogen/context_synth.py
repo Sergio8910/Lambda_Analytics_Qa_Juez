@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 def synthesize_context(seed: int, n_nodes: int = 6) -> List[Dict[str, Any]]:

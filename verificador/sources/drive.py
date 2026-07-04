@@ -18,7 +18,6 @@ import requests
 from ..settings import settings
 from . import register_source
 from .base import (
-    BaseSource,
     SourceAuthError,
     SourceError,
     SourceNotFoundError,

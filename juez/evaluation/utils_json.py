@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from .report_models import RunReport, CaseReport
+from .report_models import RunReport
 from .utils.text_normalization import repair_recursive
 
 

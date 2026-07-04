@@ -6,7 +6,7 @@ Para task_success adversarial, reutiliza el criterio bifurcado de engine_impl.py
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from .models import TurnResult, TurnSpec
 

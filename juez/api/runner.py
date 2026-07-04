@@ -868,7 +868,6 @@ def run_pipeline(
             )
 
         # ── Fase 2: pruebas dinámicas ────────────────────────────────────────
-        from evaluar_pipeline import NodeResult as _NodeResult  # noqa: E402
         node_results: List[Any] = []
         for i, pv in enumerate(previews):
             pct = 60 + int((i / max(len(previews), 1)) * 25)

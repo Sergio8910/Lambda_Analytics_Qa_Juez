@@ -6,7 +6,7 @@ CheckResult. No conocen n8n ni el Juez — reutilizables por cualquier evaluador
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 
 from .protocol import Issue, mk_issue
 

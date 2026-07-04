@@ -17,7 +17,6 @@ cronologico estable sin depender del filesystem.
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional

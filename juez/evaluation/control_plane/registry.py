@@ -8,7 +8,7 @@ from datetime import datetime
 from uuid import UUID
 import logging
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc
+from sqlalchemy import and_, desc
 
 from juez.evaluation.control_plane.models import (
     Job, JobStatusEnum, JobKindEnum, Dataset, Suite, Baseline, EvaluationResult
@@ -406,7 +406,6 @@ class ResultRegistry:
     
     def aggregate_job_metrics(self, job_id: UUID) -> Dict[str, float]:
         """Calculate aggregated metrics for a job"""
-        from sqlalchemy import func
         
         results = self.db.query(EvaluationResult).filter(
             EvaluationResult.job_id == job_id

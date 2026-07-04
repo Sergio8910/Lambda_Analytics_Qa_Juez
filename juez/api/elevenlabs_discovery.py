@@ -12,7 +12,7 @@ y opcionalmente quiere incluir los flujos n8n que ese agente llama.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 from urllib.parse import urlparse
 
 import requests

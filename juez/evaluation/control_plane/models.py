@@ -4,7 +4,6 @@ Defines all ORM models for job orchestration and metadata.
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any
 from sqlalchemy import (
     Column, String, Integer, Float, Boolean, DateTime, 
     ARRAY, JSON, UUID, ForeignKey, Index, Enum, Text, INET

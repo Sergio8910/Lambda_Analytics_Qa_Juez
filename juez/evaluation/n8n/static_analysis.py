@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
 import re
 from collections import Counter, defaultdict
 from statistics import mean
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List
 
 from .models import N8nFinding, N8nScorecard, N8nWorkflowAnalysis
 from .parser import iter_parameter_strings, parse_workflow

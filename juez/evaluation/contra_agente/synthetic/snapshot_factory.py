@@ -90,7 +90,7 @@ def make_data(
         return make_synthetic_data(batch_id, plan_idx)
 
     try:
-        from .real_db_source import make_real_db_data, RealDbError
+        from .real_db_source import make_real_db_data
         return make_real_db_data(real_inventario_id)
     except Exception as exc:
         log.warning(

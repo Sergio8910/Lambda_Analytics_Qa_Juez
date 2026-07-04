@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 # Asegurar que el path del proyecto esté disponible
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))

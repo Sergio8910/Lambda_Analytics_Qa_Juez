@@ -18,7 +18,6 @@ from typing import List, Optional
 
 from .evaluator import evaluate_prompt
 from .models import (
-    DIMENSION_WEIGHTS,
     Dimension,
     PromptEvalRequest,
     PromptEvalResult,

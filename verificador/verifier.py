@@ -16,7 +16,6 @@ from .clientes.base import ClientError, ClientNotFoundError
 from .inspectors import get_inspector
 from .inspectors.base import InspectorError
 from .schemas import (
-    CheckResult,
     Issue,
     Severidad,
     VerifyWebhookRequest,

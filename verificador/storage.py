@@ -10,7 +10,6 @@ Tabla principal: `verifications`. Idempotencia por `(cliente, artifact_id)`.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import uuid
@@ -22,7 +21,7 @@ from sqlalchemy import (
     select, update,
 )
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 # JSONB nativo en Postgres, JSON portable en SQLite
 try:

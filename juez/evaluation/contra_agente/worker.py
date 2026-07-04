@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from .evaluator import TurnEvaluator
 from .models import (
@@ -14,7 +14,6 @@ from .models import (
     ConversationPlan,
     ConversationResult,
     TurnResult,
-    TurnSpec,
 )
 
 _ADAPTIVE_EVAL_MODEL = "gpt-4o-mini"

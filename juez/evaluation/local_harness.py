@@ -20,7 +20,6 @@ os.environ.setdefault("DEEPEVAL_TELEMETRY", "false")
 
 from .case_factory import build_cases
 from .case_generator import generate_cases
-from .judge_engine import JudgeEngine
 from .metamorphic import build_variants
 from .report_models import (
     ContraAgentSpec,

@@ -23,7 +23,6 @@ import argparse
 import json
 import os
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -66,7 +65,7 @@ try:
             for fut in concurrent.futures.as_completed(futures):
                 try:
                     results.append(fut.result())
-                except Exception as exc:
+                except Exception:
                     pass
         from juez.evaluation.contra_agente.models import BatchResult
         total = len(results)

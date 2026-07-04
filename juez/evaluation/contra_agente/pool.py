@@ -16,7 +16,6 @@ from .models import (
     ConversationBatch,
     ConversationPlan,
     ConversationResult,
-    TurnResult,
 )
 from .synthetic.adapter import MockAdapter
 from .synthetic.cost_meter import CostMeter

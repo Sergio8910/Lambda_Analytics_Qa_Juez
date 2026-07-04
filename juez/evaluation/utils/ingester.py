@@ -9,9 +9,8 @@ Flujo:
 from __future__ import annotations
 
 import json
-import os
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import urllib.request
 import urllib.parse

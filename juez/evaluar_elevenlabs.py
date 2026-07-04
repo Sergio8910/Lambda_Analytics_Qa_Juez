@@ -45,9 +45,6 @@ try:
     from juez.evaluation.contra_agente.generator import generar_batch as _ca_generar_batch
     from juez.evaluation.contra_agente.pool import ejecutar_batch as _ca_ejecutar_batch
     from juez.evaluation.contra_agente.evaluator import TurnEvaluator as _TurnEvaluator
-    from juez.evaluation.contra_agente.reporter import generar_reporte_batch as _ca_reporter
-    from juez.evaluation.contra_agente.reporter import generar_json_batch as _ca_json
-    from juez.evaluation.contra_agente.models import BatchResult as _BatchResult
     HAS_CONTRA_AGENTE = True
 except Exception:
     HAS_CONTRA_AGENTE = False
@@ -2895,7 +2892,7 @@ def main():
     # ── Contra-agente ─────────────────────────────────────────────────────────
     from juez.evaluation.contra_agente.generator import generar_batch
     from juez.evaluation.contra_agente.pool import ejecutar_batch
-    from juez.evaluation.contra_agente.reporter import generar_reporte_batch, generar_json_batch
+    from juez.evaluation.contra_agente.reporter import generar_reporte_batch
     from juez.evaluation.contra_agente.adapters.elevenlabs import ElevenLabsAdapter
     from juez.evaluation.contra_agente.evaluator import TurnEvaluator
 

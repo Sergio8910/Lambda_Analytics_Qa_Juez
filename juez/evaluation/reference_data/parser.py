@@ -15,7 +15,7 @@ import csv
 import io
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, List
 
 from .models import ReferenceDataset, ReferenceRecord
 

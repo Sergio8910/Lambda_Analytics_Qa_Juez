@@ -17,7 +17,7 @@ import hashlib
 import re
 import time
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from .llm_judge import run_llm_judge
 from .models import (
@@ -29,7 +29,6 @@ from .models import (
     PromptEvalRequest,
     PromptEvalResult,
     PromptMetrics,
-    Severity,
 )
 from .rules import (
     _detect_idioma_simple,
