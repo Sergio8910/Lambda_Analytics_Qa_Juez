@@ -552,37 +552,6 @@ def _generate_cases(
     return cases, context_map
 def _tokenize(text: str) -> List[str]:
     return [t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) > 3]
-def _auto_select_rag(prompt_base: str) -> Optional[str]:
-    base = Path("RAGs")
-    if not base.exists():
-        return None
-    prompt_tokens = set(_tokenize(prompt_base))
-    if not prompt_tokens:
-        return None
-    best_name = None
-    best_score = 0
-    for path in base.iterdir():
-        if not path.is_file() or path.suffix.lower() not in {".json", ".txt"}:
-            continue
-        try:
-            raw = path.read_text(encoding="utf-8-sig")
-        except Exception:
-            continue
-        text_block = raw
-        if path.suffix.lower() == ".json":
-            try:
-                data = json.loads(raw)
-                if isinstance(data, dict) and "chunks" in data:
-                    text_block = " ".join(str(c) for c in data.get("chunks") or [])
-                elif isinstance(data, list):
-                    text_block = " ".join(str(c) for c in data)
-            except Exception:
-                text_block = raw
-        score = len(prompt_tokens & set(_tokenize(text_block)))
-        if score > best_score:
-            best_score = score
-            best_name = path.name
-    return best_name
 def _load_rag_context(rag_file: str) -> List[str]:
     base = Path("RAGs").resolve()
     path = (base / rag_file).resolve()

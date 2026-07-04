@@ -752,8 +752,3 @@ def generar_reporte_batch(
     SEP()
 
     return "\n".join(lines)
-
-
-def generar_json_batch(result: BatchResult) -> str:
-    """Serializa el BatchResult a JSON para consumo programático."""
-    return result.model_dump_json(indent=2)
