@@ -47,6 +47,11 @@ def render_self_heal_report(result: SelfHealResult) -> str:
             lines.append(f"      backup     : {item.backup_dir}")
         if item.rollback_audit_path:
             lines.append(f"      rollback   : {item.rollback_audit_path}")
+        if item.generic_fixer_attempts:
+            lines.append("      fixer generico - intentos:")
+            for att in item.generic_fixer_attempts:
+                estado = "APROBADO" if att.get("approved") else "descartado"
+                lines.append(f"        intento {att.get('attempt_no')} [{estado}]: {att.get('reason')}")
     lines.append("")
     lines.append("  REQUIERE REVISION HUMANA:")
     if not result.human_review_required:
@@ -57,6 +62,10 @@ def render_self_heal_report(result: SelfHealResult) -> str:
             f"({item.get('file') or 'sin archivo'})"
         )
         lines.append(f"      razon: {item.get('reason')}")
+        if item.get("generic_fixer_attempts"):
+            lines.append("      fixer generico - propuestas descartadas:")
+            for att in item["generic_fixer_attempts"]:
+                lines.append(f"        intento {att.get('attempt_no')}: {att.get('reason')}")
     lines.extend(
         [
             "=" * 80,

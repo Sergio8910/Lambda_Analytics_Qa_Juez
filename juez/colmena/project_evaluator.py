@@ -40,6 +40,12 @@ def evaluate_project_path(
     classification = classify_project(inventory)
     findings = evaluate_project_workers(root, inventory)
 
+    from .business_rules import business_rules_worker_findings, run_functional_verification
+
+    rule_findings, rules_report = business_rules_worker_findings(root, inventory)
+    findings.extend(rule_findings)
+    findings.extend(run_functional_verification(root, inventory, rules_report))
+
     legacy_score: float | None = None
     legacy_findings: list[dict[str, Any]] = []
     legacy_components = _components_from_inventory(root, inventory)

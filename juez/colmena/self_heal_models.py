@@ -9,6 +9,7 @@ SelfHealFixType = Literal[
     "python_add_timeout",
     "prompt_add_guardrails",
     "n8n_replace_private_url",
+    "generic_llm_fix",
     "manual_review",
 ]
 
@@ -45,6 +46,7 @@ class SelfHealIteration:
     critical_before: int | None = None
     critical_after: int | None = None
     lines_changed: int = 0
+    generic_fixer_attempts: list[dict] = field(default_factory=list)
 
 
 @dataclass

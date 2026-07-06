@@ -66,6 +66,7 @@ FindingCategory = Literal[
     "integration",
     "performance",
     "maintainability",
+    "business_rule",
 ]
 
 

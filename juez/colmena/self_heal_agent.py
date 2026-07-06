@@ -38,6 +38,9 @@ def run_self_heal(
     max_lines_per_fix: int = 40,
     fast_reeval: bool = False,
     output_dir: Path | str = "outputs",
+    enable_generic_fixer: bool = False,
+    max_attempts_per_finding: int = 3,
+    time_limit_per_finding_min: int = 10,
 ) -> SelfHealResult:
     root = Path(project_path).resolve()
     started = datetime.now(UTC).isoformat()
@@ -49,6 +52,12 @@ def run_self_heal(
         max_lines_per_fix=max_lines_per_fix,
         fast_reeval=fast_reeval,
     )
+    rules_report = None
+    if enable_generic_fixer:
+        from .business_rules import extract_business_rules
+        from .scanner import scan_project
+
+        rules_report = extract_business_rules(root, scan_project(root))
     initial = evaluate_project_path(root)
     result.score_initial = initial.score.score
     result.readiness_initial = initial.score.status
@@ -76,6 +85,30 @@ def run_self_heal(
             critical_before=current_report.score.critical_findings,
         )
         plan = _plan_fix(root, finding)
+        if plan.fix_type == "manual_review" and enable_generic_fixer and rules_report is not None:
+            from .generic_fixer import attempt_generic_fix, to_self_heal_plan
+
+            outcome = attempt_generic_fix(
+                root, finding, rules_report,
+                max_attempts=max_attempts_per_finding,
+                time_limit_per_finding_min=time_limit_per_finding_min,
+            )
+            iteration.generic_fixer_attempts = [
+                {
+                    "attempt_no": a.attempt_no, "approach": a.approach, "target_path": a.target_path,
+                    "tests_ok": a.tests_ok, "business_rules_ok": a.business_rules_ok,
+                    "worker_ok": a.worker_ok, "approved": a.approved, "reason": a.reason,
+                }
+                for a in outcome.attempts
+            ]
+            generic_plan = to_self_heal_plan(finding, outcome)
+            if generic_plan is not None:
+                plan = generic_plan
+            elif outcome.attempted:
+                plan.reason = (
+                    f"Fixer generico agoto {len(outcome.attempts)} intento(s) sin candidato aprobado; "
+                    "ver generic_fixer_attempts para el detalle de cada propuesta descartada."
+                )
         iteration.confidence = plan.confidence
         iteration.fix_type = plan.fix_type
         iteration.reason = plan.reason
@@ -84,7 +117,9 @@ def run_self_heal(
         if not allowed:
             iteration.decision = "blocked"
             iteration.reason = blocked_reason or "Bloqueado por gate de entrada."
-            result.human_review_required.append(_review_item(finding, iteration.reason))
+            result.human_review_required.append(
+                _review_item(finding, iteration.reason, generic_attempts=iteration.generic_fixer_attempts)
+            )
             result.iterations.append(iteration)
             audit_events.append(_audit_event("blocked", iteration))
             continue
@@ -264,8 +299,8 @@ def _changed_lines(before: str, after: str) -> int:
     return sum(1 for line in diff if line.startswith(("+ ", "- ")))
 
 
-def _review_item(finding, reason: str) -> dict:
-    return {
+def _review_item(finding, reason: str, *, generic_attempts: list[dict] | None = None) -> dict:
+    item = {
         "id": finding.id,
         "severity": finding.severity,
         "category": finding.category,
@@ -273,6 +308,9 @@ def _review_item(finding, reason: str) -> dict:
         "file": finding.file,
         "reason": reason,
     }
+    if generic_attempts:
+        item["generic_fixer_attempts"] = generic_attempts
+    return item
 
 
 def _audit_event(event: str, iteration: SelfHealIteration) -> dict:

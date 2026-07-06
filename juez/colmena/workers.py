@@ -50,6 +50,7 @@ class FindingBuilder:
             "documentation": "DOC",
             "deployment": "DEP",
             "testing": "TST",
+            "business_rule": "RN",
         }.get(category, "COL")
         return NormalizedFinding(
             id=f"{prefix}-{self._seq:03d}",
