@@ -14,13 +14,14 @@ from dotenv import load_dotenv
 
 from .auto_fix_agent import render_auto_fix_agent_report
 from .colmena import Componente, render_colmena_report
+from .project_evaluator import render_project_report, write_project_outputs
 from .reina import ReinaColmena
 
 
 def main() -> None:
     load_dotenv()
     p = argparse.ArgumentParser(prog="python -m juez.colmena")
-    p.add_argument("--project", "--config", dest="project", required=True, help="JSON del proyecto")
+    p.add_argument("--project", "--config", dest="project", required=True, help="JSON del proyecto o carpeta")
     p.add_argument("--incluir-dinamicas", action="store_true", help="Corre obreras dinamicas")
     p.add_argument("--auto-fix", action="store_true", help="Evalua, aplica fixes, re-evalua e itera")
     p.add_argument("--max-iterations", type=int, default=5, help="Maximo de iteraciones de Auto-Fix")
@@ -30,6 +31,26 @@ def main() -> None:
     args = p.parse_args()
 
     project_path = Path(args.project)
+    if not project_path.exists():
+        raise SystemExit(f"El proyecto no existe: {project_path}")
+    if project_path.is_dir():
+        reina = ReinaColmena.from_project_path(
+            project_path,
+            incluir_dinamicas=args.incluir_dinamicas,
+        )
+        result = reina.evaluar()
+        reporte = render_project_report(result)
+        if args.auto_fix:
+            reporte += (
+                "\n\nAUTO-FIX: para carpetas de proyecto, esta corrida deja propuestas "
+                "seguras y trazables en el reporte. No aplica cambios destructivos ni despliega."
+            )
+        print(reporte)
+        txt_path, json_path = write_project_outputs(result)
+        print(f"\nReporte guardado en: {txt_path}")
+        print(f"JSON guardado en: {json_path}")
+        return
+
     data = json.loads(project_path.read_text(encoding="utf-8-sig"))
     componentes = [Componente(**c) for c in data.get("componentes", [])]
     reina = ReinaColmena(

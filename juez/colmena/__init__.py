@@ -10,15 +10,23 @@ opt-in — se listan como "no ejecutadas" salvo que se activen.
 """
 from .auto_fix_agent import AutoFixAgentResult, render_auto_fix_agent_report, run_auto_fix_agent
 from .colmena import ColmenaResult, Componente, render_colmena_report, run_colmena
+from .models import NormalizedFinding, ProjectEvaluationReport, ProjectInventory
+from .project_evaluator import evaluate_project_path, render_project_report, write_project_outputs
 from .reina import ReinaColmena
 
 __all__ = [
     "AutoFixAgentResult",
     "ColmenaResult",
     "Componente",
+    "NormalizedFinding",
+    "ProjectEvaluationReport",
+    "ProjectInventory",
     "ReinaColmena",
+    "evaluate_project_path",
     "render_auto_fix_agent_report",
     "render_colmena_report",
+    "render_project_report",
     "run_auto_fix_agent",
     "run_colmena",
+    "write_project_outputs",
 ]

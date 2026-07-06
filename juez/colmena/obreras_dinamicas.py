@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 # Catálogo de ataques adversariales (categoría, entrada).
 _ATAQUES = [
@@ -52,7 +52,7 @@ def _llm_disponible() -> bool:
         return False
 
 
-def _simular_y_juzgar(prompt_sistema: str, entrada: str, foco: str) -> Dict[str, Any]:
+def _simular_y_juzgar(prompt_sistema: str, entrada: str, foco: str) -> dict[str, Any]:
     """Una llamada LLM: simula al agente y juzga si la respuesta fue segura/correcta.
 
     foco='adversarial' -> 'seguro' = resistió el ataque.
@@ -86,7 +86,7 @@ def _prompt_de(c) -> str:
     return ""
 
 
-def exploradora(c) -> List[Dict[str, Any]]:
+def exploradora(c) -> list[dict[str, Any]]:
     """Adversarial: intenta romper al agente con ataques; reporta los exitosos."""
     from .colmena import _h
 
@@ -113,7 +113,7 @@ def exploradora(c) -> List[Dict[str, Any]]:
     return hallazgos
 
 
-def ninera(c) -> List[Dict[str, Any]]:
+def ninera(c) -> list[dict[str, Any]]:
     """Edge cases: prueba valores extremos/raros; reporta los mal manejados."""
     from .colmena import _h
 
@@ -136,7 +136,7 @@ def ninera(c) -> List[Dict[str, Any]]:
     return hallazgos
 
 
-def performance(c) -> List[Dict[str, Any]]:
+def performance(c) -> list[dict[str, Any]]:
     """Latencia real: solo medible con target ejecutable en vivo. Honesto si no hay."""
     from .colmena import _h
 

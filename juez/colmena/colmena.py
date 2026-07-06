@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -26,10 +26,10 @@ class Componente(BaseModel):
     """Una pieza del proyecto a evaluar."""
     kind: str = Field(..., description="'n8n' | 'prompt'")
     nombre: str
-    workflow_json: Optional[Dict[str, Any]] = None
-    workflow_id: Optional[str] = None
-    objetivos: List[Dict[str, Any]] = Field(default_factory=list)
-    prompt: Optional[str] = None
+    workflow_json: dict[str, Any] | None = None
+    workflow_id: str | None = None
+    objetivos: list[dict[str, Any]] = Field(default_factory=list)
+    prompt: str | None = None
     model_config = {"extra": "allow"}
 
 
@@ -37,20 +37,20 @@ class ColmenaResult(BaseModel):
     project_id: str
     score: float
     veredicto: str  # "LISTO" | "NECESITA TRABAJO"
-    resumen_severidad: Dict[str, int] = Field(default_factory=dict)
-    hallazgos: List[Dict[str, Any]] = Field(default_factory=list)
-    obreras_no_ejecutadas: List[str] = Field(default_factory=list)
+    resumen_severidad: dict[str, int] = Field(default_factory=dict)
+    hallazgos: list[dict[str, Any]] = Field(default_factory=list)
+    obreras_no_ejecutadas: list[str] = Field(default_factory=list)
     componentes: int = 0
     model_config = {"extra": "forbid"}
 
 
-def _h(obrera: str, severidad: str, descripcion: str, ubicacion: str = "", accion: str = "") -> Dict[str, Any]:
+def _h(obrera: str, severidad: str, descripcion: str, ubicacion: str = "", accion: str = "") -> dict[str, Any]:
     return {"obrera": obrera, "severidad": _norm_sev(severidad),
             "descripcion": descripcion, "ubicacion": ubicacion, "accion": accion}
 
 
 # --------------------------------------------------------------------------- obreras (reusan el Juez)
-def _resolver_wf(c: Componente) -> Optional[Dict[str, Any]]:
+def _resolver_wf(c: Componente) -> dict[str, Any] | None:
     if c.workflow_json:
         return c.workflow_json
     if c.workflow_id:
@@ -62,7 +62,7 @@ def _resolver_wf(c: Componente) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _guardiana(c: Componente) -> List[Dict[str, Any]]:
+def _guardiana(c: Componente) -> list[dict[str, Any]]:
     wf = _resolver_wf(c)
     if not wf:
         return []
@@ -72,7 +72,7 @@ def _guardiana(c: Componente) -> List[Dict[str, Any]]:
             for p in check_tool_security(wf)]
 
 
-def _flujos(c: Componente) -> List[Dict[str, Any]]:
+def _flujos(c: Componente) -> list[dict[str, Any]]:
     wf = _resolver_wf(c)
     if not wf:
         return []
@@ -82,7 +82,7 @@ def _flujos(c: Componente) -> List[Dict[str, Any]]:
                ", ".join(f.node_names), f.recommendation) for f in a.findings]
 
 
-def _integracion(c: Componente) -> List[Dict[str, Any]]:
+def _integracion(c: Componente) -> list[dict[str, Any]]:
     wf = _resolver_wf(c)
     if not wf or not c.objetivos:
         return []
@@ -92,7 +92,7 @@ def _integracion(c: Componente) -> List[Dict[str, Any]]:
                ", ".join(f.node_names), f.recommendation) for f in rep.findings]
 
 
-def _prompts(c: Componente) -> List[Dict[str, Any]]:
+def _prompts(c: Componente) -> list[dict[str, Any]]:
     if not c.prompt:
         return []
     from prompt_eval.evaluator import evaluate_prompt
@@ -118,7 +118,7 @@ def _obreras_dinamicas():
 
 
 # --------------------------------------------------------------------------- Reina (orquesta)
-def run_colmena(project_id: str, componentes: List[Componente], incluir_dinamicas: bool = True) -> ColmenaResult:
+def run_colmena(project_id: str, componentes: list[Componente], incluir_dinamicas: bool = True) -> ColmenaResult:
     """Corre TODAS las obreras (estáticas + dinámicas) EN PARALELO sobre los componentes."""
     dinamicas = _obreras_dinamicas() if incluir_dinamicas else []
     tareas = []
@@ -128,7 +128,7 @@ def run_colmena(project_id: str, componentes: List[Componente], incluir_dinamica
         for obrera in dinamicas:
             tareas.append((obrera, c))
 
-    hallazgos: List[Dict[str, Any]] = []
+    hallazgos: list[dict[str, Any]] = []
     if tareas:
         with ThreadPoolExecutor(max_workers=min(8, len(tareas))) as ex:
             for res in ex.map(lambda t: _safe(t[0], t[1]), tareas):
@@ -154,7 +154,7 @@ def run_colmena(project_id: str, componentes: List[Componente], incluir_dinamica
     )
 
 
-def _safe(fn, c: Componente) -> List[Dict[str, Any]]:
+def _safe(fn, c: Componente) -> list[dict[str, Any]]:
     try:
         return fn(c)
     except Exception as exc:
@@ -172,7 +172,7 @@ def render_colmena_report(r: ColmenaResult) -> str:
     L.append(f"  Proyecto           : {r.project_id}")
     L.append(f"  Componentes        : {r.componentes}")
     L.append(f"  Estado general     : {estado}  (score {r.score}/100)")
-    L.append(f"  Hallazgos          : " + ", ".join(f"{k}={v}" for k, v in r.resumen_severidad.items() if v))
+    L.append("  Hallazgos          : " + ", ".join(f"{k}={v}" for k, v in r.resumen_severidad.items() if v))
     if r.obreras_no_ejecutadas:
         L.append(f"  Obreras NO corridas: {', '.join(r.obreras_no_ejecutadas)} (dinámicas, opt-in)")
     L.append(_L)

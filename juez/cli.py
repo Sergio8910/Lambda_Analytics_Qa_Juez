@@ -16,6 +16,8 @@ from juez.colmena import (
     ReinaColmena,
     render_auto_fix_agent_report,
     render_colmena_report,
+    render_project_report,
+    write_project_outputs,
 )
 
 
@@ -25,7 +27,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     colmena = sub.add_parser("colmena", help="Evalua un proyecto con La Colmena")
-    colmena.add_argument("--project", required=True, help="JSON del proyecto")
+    colmena.add_argument("--project", required=True, help="JSON del proyecto o carpeta a evaluar")
     colmena.add_argument("--incluir-dinamicas", action="store_true", help="Corre obreras dinamicas")
     colmena.add_argument("--auto-fix", action="store_true", help="Evalua, aplica fixes, re-evalua e itera")
     colmena.add_argument("--max-iterations", type=int, default=5, help="Maximo de iteraciones de Auto-Fix")
@@ -52,6 +54,26 @@ def main() -> None:
 
 def _run_colmena(args: argparse.Namespace) -> None:
     project_path = Path(args.project)
+    if not project_path.exists():
+        raise SystemExit(f"El proyecto no existe: {project_path}")
+    if project_path.is_dir():
+        reina = ReinaColmena.from_project_path(
+            project_path,
+            incluir_dinamicas=args.incluir_dinamicas,
+        )
+        result = reina.evaluar()
+        report_txt = render_project_report(result)
+        if args.auto_fix:
+            report_txt += (
+                "\n\nAUTO-FIX: para carpetas de proyecto, esta corrida deja propuestas "
+                "seguras y trazables en el reporte. No aplica cambios destructivos ni despliega."
+            )
+        print(report_txt)
+        txt_path, json_path = write_project_outputs(result)
+        print(f"\nReporte guardado en: {txt_path}")
+        print(f"JSON guardado en: {json_path}")
+        return
+
     data = json.loads(project_path.read_text(encoding="utf-8-sig"))
     componentes = [Componente(**c) for c in data.get("componentes", [])]
     reina = ReinaColmena(
