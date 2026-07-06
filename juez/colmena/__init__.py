@@ -8,6 +8,17 @@ Las obreras estáticas/sintéticas (seguras, sin costo) corren por defecto. Las
 dinámicas (performance, adversarial, edge-cases) disparan/cuestan tokens y son
 opt-in — se listan como "no ejecutadas" salvo que se activen.
 """
-from .colmena import ColmenaResult, run_colmena, render_colmena_report
+from .auto_fix_agent import AutoFixAgentResult, render_auto_fix_agent_report, run_auto_fix_agent
+from .colmena import ColmenaResult, Componente, render_colmena_report, run_colmena
+from .reina import ReinaColmena
 
-__all__ = ["ColmenaResult", "run_colmena", "render_colmena_report"]
+__all__ = [
+    "AutoFixAgentResult",
+    "ColmenaResult",
+    "Componente",
+    "ReinaColmena",
+    "render_auto_fix_agent_report",
+    "render_colmena_report",
+    "run_auto_fix_agent",
+    "run_colmena",
+]
