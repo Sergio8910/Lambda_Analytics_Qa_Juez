@@ -112,12 +112,20 @@ _OBRERAS_ESTATICAS = {
 }
 
 
+def _obreras_dinamicas():
+    from .obreras_dinamicas import exploradora, ninera, performance
+    return [exploradora, ninera, performance]
+
+
 # --------------------------------------------------------------------------- Reina (orquesta)
-def run_colmena(project_id: str, componentes: List[Componente], incluir_dinamicas: bool = False) -> ColmenaResult:
-    """Corre las obreras estáticas EN PARALELO sobre todos los componentes."""
+def run_colmena(project_id: str, componentes: List[Componente], incluir_dinamicas: bool = True) -> ColmenaResult:
+    """Corre TODAS las obreras (estáticas + dinámicas) EN PARALELO sobre los componentes."""
+    dinamicas = _obreras_dinamicas() if incluir_dinamicas else []
     tareas = []
     for c in componentes:
         for obrera in _OBRERAS_ESTATICAS.get(c.kind, []):
+            tareas.append((obrera, c))
+        for obrera in dinamicas:
             tareas.append((obrera, c))
 
     hallazgos: List[Dict[str, Any]] = []
