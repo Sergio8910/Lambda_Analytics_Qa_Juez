@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from .approval_models import PatchApprovalItem
 from .models import ProjectFixProposal
+from .patch_apply_models import ParsedPatch
 from .patch_models import PatchPlanItem
 
 
@@ -201,3 +202,82 @@ def _target_allowed_for_export(target_path: str | None) -> bool:
     return normalized.startswith("tests/colmena_synthetic/") or normalized.startswith(
         "colmena_generated_tests/"
     )
+
+
+def can_apply_approved_patch(
+    approval_item: PatchApprovalItem,
+    parsed_patch: ParsedPatch,
+    project_path: str,
+) -> tuple[bool, str | None]:
+    """Permite aplicar solo creacion de archivos nuevos aprobados y seguros."""
+    allowed, reason = can_mark_patch_as_applicable(approval_item)
+    if not allowed:
+        return False, reason
+    if parsed_patch.action != "create_file":
+        return False, "Solo se permite create_file."
+    if approval_item.patch_id != parsed_patch.patch_id:
+        return False, "patch_id no coincide entre approval y patch parseado."
+    if approval_item.proposal_id != parsed_patch.proposal_id:
+        return False, "proposal_id no coincide entre approval y patch parseado."
+    if approval_item.target_path and approval_item.target_path != parsed_patch.target_path:
+        return False, "target_path no coincide entre approval y patch parseado."
+    if approval_item.checksum != parsed_patch.checksum:
+        return False, "checksum no coincide con el patch parseado."
+    return is_safe_new_file_target(parsed_patch.target_path, project_path)
+
+
+def is_safe_new_file_target(target_path: str, project_path: str) -> tuple[bool, str | None]:
+    root = Path(project_path).resolve()
+    target = Path(target_path)
+    normalized = target_path.replace("\\", "/").strip("/")
+    if not normalized:
+        return False, "target_path vacio."
+    if target.is_absolute():
+        return False, "No se permiten rutas absolutas."
+    if ".." in target.parts:
+        return False, "No se permite path traversal."
+    try:
+        resolved = (root / target).resolve()
+        resolved.relative_to(root)
+    except ValueError:
+        return False, "La ruta destino sale del proyecto."
+    if resolved.exists():
+        return False, "El archivo destino ya existe; no se sobrescribe."
+    if _is_blocked_apply_target(normalized):
+        return False, f"Target bloqueado por politica create_file_only: {target_path}."
+    if _target_allowed_for_apply(normalized):
+        return True, None
+    return False, f"Target no permitido para aplicacion en esta fase: {target_path}."
+
+
+def _target_allowed_for_apply(normalized: str) -> bool:
+    if normalized in {
+        ".env.example",
+        "README_COLMENA_REVIEW.md",
+        "COLMENA_TEST_PLAN.md",
+        "COLMENA_REPAIR_PROPOSALS.md",
+    }:
+        return True
+    if normalized.startswith("colmena_generated_tests/"):
+        return normalized.endswith(".md") or normalized.endswith(".py")
+    if normalized.startswith("tests/colmena_synthetic/"):
+        return normalized.endswith(".md") or normalized.endswith(".py")
+    if normalized.startswith("docs/colmena/"):
+        return normalized.endswith(".md")
+    return False
+
+
+def _is_blocked_apply_target(normalized: str) -> bool:
+    lower = normalized.lower()
+    name = Path(lower).name
+    if lower == ".env" or name in {"credentials.json", "secrets.json"}:
+        return True
+    if lower.endswith((".key", ".pem", ".p12", ".pfx", ".crt", ".cert")):
+        return True
+    if lower.startswith(("src/", "app/", "juez/", "prompts/")):
+        return True
+    if lower.endswith((".workflow.json", ".n8n.json")):
+        return True
+    if "config.production." in lower or "docker-compose.prod." in lower:
+        return True
+    return False

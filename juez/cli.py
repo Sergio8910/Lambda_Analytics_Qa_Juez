@@ -17,14 +17,17 @@ from juez.colmena import (
     build_approval_manifest,
     build_patch_approval_report,
     export_patch_plan_items,
+    apply_approved_patches,
     render_auto_fix_agent_report,
     render_colmena_report,
+    render_patch_apply_report,
     render_patch_approval_report,
     render_patch_plan_report,
     render_project_report,
     render_repair_report,
     validate_approval_file,
     write_approval_manifest,
+    write_patch_apply_report,
     write_patch_approval_report,
     run_project_repair_loop,
     write_patch_plan_outputs,
@@ -63,6 +66,11 @@ def main() -> None:
         help="Exporta diffs seguros a outputs/patches y genera manifiesto de aprobacion.",
     )
     colmena.add_argument("--approval-file", help="Valida un manifiesto de aprobacion JSON sin aplicar patches.")
+    colmena.add_argument(
+        "--apply-approved-patches",
+        action="store_true",
+        help="Aplica solo patches aprobados que crean archivos nuevos permitidos.",
+    )
     colmena.add_argument("--no-apply", action="store_true", help="Re-evalua en memoria, sin escribir cambios")
     colmena.add_argument("--no-git", action="store_true", help="No crear backup branch ni commits automaticos")
 
@@ -88,6 +96,23 @@ def _run_colmena(args: argparse.Namespace) -> None:
     if not project_path.exists():
         raise SystemExit(f"El proyecto no existe: {project_path}")
     if project_path.is_dir():
+        if args.apply_approved_patches:
+            if not args.approval_file:
+                raise SystemExit("--apply-approved-patches requiere --approval-file")
+            if not Path(args.approval_file).exists():
+                raise SystemExit(f"El approval file no existe: {args.approval_file}")
+            apply_result = write_patch_apply_report(
+                apply_approved_patches(
+                    project_path=project_path,
+                    approval_file=args.approval_file,
+                )
+            )
+            print(render_patch_apply_report(apply_result))
+            print(f"\nApply report guardado en: {apply_result.txt_report_path}")
+            print(f"Apply report JSON guardado en: {apply_result.json_report_path}")
+            print(f"Audit log guardado en: {apply_result.audit_log_path}")
+            return
+
         if args.approval_file and not (args.repair_mode or args.generate_diffs or args.export_patches):
             validation = validate_approval_file(args.approval_file)
             approval_report = build_patch_approval_report(
