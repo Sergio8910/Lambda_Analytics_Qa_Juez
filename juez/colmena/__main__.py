@@ -12,10 +12,18 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .approval_manifest import build_approval_manifest, write_approval_manifest
+from .approval_report import (
+    build_patch_approval_report,
+    render_patch_approval_report,
+    write_patch_approval_report,
+)
+from .approval_validator import validate_approval_file
 from .auto_fix_agent import render_auto_fix_agent_report
 from .colmena import Componente, render_colmena_report
 from .iteration_loop import run_project_repair_loop
 from .models import RepairLoopConfig
+from .patch_exporter import export_patch_plan_items
 from .patch_planner import build_patch_plan
 from .patch_report import render_patch_plan_report, write_patch_plan_outputs
 from .project_evaluator import render_project_report, write_project_outputs
@@ -43,6 +51,12 @@ def main() -> None:
         action="store_true",
         help="Genera previews de patches seguros desde el repair loop. No aplica cambios.",
     )
+    p.add_argument(
+        "--export-patches",
+        action="store_true",
+        help="Exporta diffs seguros a outputs/patches y genera manifiesto de aprobacion.",
+    )
+    p.add_argument("--approval-file", help="Valida un manifiesto de aprobacion JSON sin aplicar patches.")
     p.add_argument("--no-apply", action="store_true", help="Re-evalua en memoria, sin escribir cambios")
     p.add_argument("--no-git", action="store_true", help="No crear backup branch ni commits automaticos")
     args = p.parse_args()
@@ -51,7 +65,24 @@ def main() -> None:
     if not project_path.exists():
         raise SystemExit(f"El proyecto no existe: {project_path}")
     if project_path.is_dir():
-        if args.repair_mode or args.generate_diffs:
+        if args.approval_file and not (args.repair_mode or args.generate_diffs or args.export_patches):
+            validation = validate_approval_file(args.approval_file)
+            approval_report = build_patch_approval_report(
+                patch_plan=None,
+                export_result=None,
+                manifest=None,
+                validation=validation,
+                approval_file=args.approval_file,
+                export_patches=False,
+            )
+            approval_report.project_path = str(project_path.resolve())
+            approval_report = write_patch_approval_report(approval_report)
+            print(render_patch_approval_report(approval_report))
+            print(f"\nApproval report guardado en: {approval_report.txt_report_path}")
+            print(f"Approval report JSON guardado en: {approval_report.json_report_path}")
+            return
+
+        if args.repair_mode or args.generate_diffs or args.export_patches or args.approval_file:
             repair_mode = args.repair_mode or "proposal-only"
             result = run_project_repair_loop(
                 project_path,
@@ -64,11 +95,47 @@ def main() -> None:
             print(render_repair_report(result))
             print(f"\nReporte guardado en: {result.txt_report_path}")
             print(f"JSON guardado en: {result.json_report_path}")
-            if args.generate_diffs:
+            if args.generate_diffs or args.export_patches or args.approval_file:
                 patch_plan = write_patch_plan_outputs(build_patch_plan(result, mode=repair_mode))
                 print("\n" + render_patch_plan_report(patch_plan))
                 print(f"\nPatch plan guardado en: {patch_plan.txt_report_path}")
                 print(f"Patch plan JSON guardado en: {patch_plan.json_report_path}")
+                if args.export_patches:
+                    export_result = export_patch_plan_items(
+                        patch_plan.items,
+                        project_path=project_path,
+                    )
+                    manifest = write_approval_manifest(build_approval_manifest(export_result))
+                    validation = validate_approval_file(args.approval_file) if args.approval_file else None
+                    approval_report = write_patch_approval_report(
+                        build_patch_approval_report(
+                            patch_plan=patch_plan,
+                            export_result=export_result,
+                            manifest=manifest,
+                            validation=validation,
+                            approval_file=args.approval_file,
+                            export_patches=args.export_patches,
+                        )
+                    )
+                    print("\n" + render_patch_approval_report(approval_report))
+                    print(f"\nApproval manifest guardado en: {manifest.manifest_path}")
+                    print(f"Approval report guardado en: {approval_report.txt_report_path}")
+                    print(f"Approval report JSON guardado en: {approval_report.json_report_path}")
+                elif args.approval_file:
+                    validation = validate_approval_file(args.approval_file)
+                    approval_report = write_patch_approval_report(
+                        build_patch_approval_report(
+                            patch_plan=patch_plan,
+                            export_result=None,
+                            manifest=None,
+                            validation=validation,
+                            approval_file=args.approval_file,
+                            export_patches=False,
+                        )
+                    )
+                    print("\n" + render_patch_approval_report(approval_report))
+                    print(f"\nApproval report guardado en: {approval_report.txt_report_path}")
+                    print(f"Approval report JSON guardado en: {approval_report.json_report_path}")
             return
         reina = ReinaColmena.from_project_path(
             project_path,

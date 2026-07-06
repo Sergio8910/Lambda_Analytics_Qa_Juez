@@ -14,6 +14,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from .approval_models import PatchApprovalItem
 from .models import ProjectFixProposal
 from .patch_models import PatchPlanItem
 
@@ -152,3 +153,51 @@ def can_apply_patch_item(item: PatchPlanItem, mode: str) -> tuple[bool, str | No
     if item.requires_review:
         return False, "El patch requiere revision humana."
     return False, "Modo de patch no reconocido; se bloquea por seguridad."
+
+
+def can_export_patch(item: PatchPlanItem) -> tuple[bool, str | None]:
+    """Permite exportar solo diffs preview seguros a archivos .patch."""
+    if item.status != "planned":
+        return False, f"Patch no planificado: status={item.status}."
+    if not item.safe_to_apply:
+        return False, "Patch no marcado como seguro para exportacion."
+    if item.action != "create_file":
+        return False, "Solo se exportan patches de creacion de archivos nuevos."
+    if item.risk not in {"low", "medium"}:
+        return False, f"Riesgo no permitido para exportacion: {item.risk}."
+    if not item.diff_preview:
+        return False, "Patch sin diff_preview."
+    if not _target_allowed_for_export(item.target_path):
+        return False, f"Target no permitido para exportacion: {item.target_path}."
+    return True, None
+
+
+def can_mark_patch_as_applicable(approval_item: PatchApprovalItem) -> tuple[bool, str | None]:
+    """Valida aprobaciones sin convertirlas en aplicacion real."""
+    if approval_item.decision != "approve":
+        return False, "Solo una decision approve puede marcarse como aplicable en una fase futura."
+    if not approval_item.safe_to_apply:
+        return False, "El patch aprobado no esta marcado como seguro."
+    if approval_item.risk not in {"low", "medium"}:
+        return False, f"Riesgo no permitido para aplicacion futura: {approval_item.risk}."
+    if not approval_item.patch_file_path:
+        return False, "Falta patch_file_path."
+    if not approval_item.checksum:
+        return False, "Falta checksum."
+    return True, None
+
+
+def _target_allowed_for_export(target_path: str | None) -> bool:
+    if not target_path:
+        return False
+    normalized = target_path.replace("\\", "/").strip("/")
+    if normalized in {
+        ".env.example",
+        "README_COLMENA_REVIEW.md",
+        "COLMENA_TEST_PLAN.md",
+        "COLMENA_REPAIR_PROPOSALS.md",
+    }:
+        return True
+    return normalized.startswith("tests/colmena_synthetic/") or normalized.startswith(
+        "colmena_generated_tests/"
+    )
