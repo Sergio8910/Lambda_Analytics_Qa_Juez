@@ -17,8 +17,11 @@ from juez.colmena import (
     render_auto_fix_agent_report,
     render_colmena_report,
     render_project_report,
+    render_repair_report,
+    run_project_repair_loop,
     write_project_outputs,
 )
+from juez.colmena.models import RepairLoopConfig
 
 
 def main() -> None:
@@ -30,8 +33,15 @@ def main() -> None:
     colmena.add_argument("--project", required=True, help="JSON del proyecto o carpeta a evaluar")
     colmena.add_argument("--incluir-dinamicas", action="store_true", help="Corre obreras dinamicas")
     colmena.add_argument("--auto-fix", action="store_true", help="Evalua, aplica fixes, re-evalua e itera")
+    colmena.add_argument("--cases", type=int, default=10, help="Casos sinteticos para repair loop")
     colmena.add_argument("--max-iterations", type=int, default=5, help="Maximo de iteraciones de Auto-Fix")
     colmena.add_argument("--min-confidence", type=float, default=0.80, help="Confianza minima para aplicar fixes")
+    colmena.add_argument(
+        "--repair-mode",
+        choices=["dry-run", "proposal-only", "apply-safe"],
+        default=None,
+        help="Activa repair loop para carpetas. apply-safe aun se ejecuta como propuesta segura.",
+    )
     colmena.add_argument("--no-apply", action="store_true", help="Re-evalua en memoria, sin escribir cambios")
     colmena.add_argument("--no-git", action="store_true", help="No crear backup branch ni commits automaticos")
 
@@ -57,6 +67,19 @@ def _run_colmena(args: argparse.Namespace) -> None:
     if not project_path.exists():
         raise SystemExit(f"El proyecto no existe: {project_path}")
     if project_path.is_dir():
+        if args.repair_mode:
+            result = run_project_repair_loop(
+                project_path,
+                RepairLoopConfig(
+                    cases_count=args.cases,
+                    max_iterations=args.max_iterations,
+                    repair_mode=args.repair_mode,
+                ),
+            )
+            print(render_repair_report(result))
+            print(f"\nReporte guardado en: {result.txt_report_path}")
+            print(f"JSON guardado en: {result.json_report_path}")
+            return
         reina = ReinaColmena.from_project_path(
             project_path,
             incluir_dinamicas=args.incluir_dinamicas,

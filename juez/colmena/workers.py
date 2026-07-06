@@ -98,7 +98,7 @@ class BaseWorker:
     def text_files(self, suffixes: set[str] | None = None) -> Iterable[tuple[str, str]]:
         for asset in self.inventory.assets:
             path = self.root / asset.path
-            if suffixes and path.suffix.lower() not in suffixes:
+            if suffixes and path.suffix.lower() not in suffixes and path.name.lower() not in suffixes:
                 continue
             try:
                 yield asset.path, path.read_text(encoding="utf-8", errors="ignore")

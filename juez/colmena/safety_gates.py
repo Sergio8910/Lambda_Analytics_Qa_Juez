@@ -14,6 +14,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from .models import ProjectFixProposal
+
 
 class SafetyGateResult(BaseModel):
     ok: bool
@@ -107,3 +109,19 @@ class GitSafetyGates:
             encoding="utf-8",
             errors="replace",
         ).returncode
+
+
+def can_apply_fix(proposal: ProjectFixProposal, mode: str) -> tuple[bool, str | None]:
+    """Decision centralizada para reparar proyectos.
+
+    En esta fase no se aplican cambios sobre carpetas de proyecto. ``apply-safe``
+    queda reservado y degrada a propuesta para no crear una falsa sensacion de
+    automatizacion.
+    """
+    if mode in {"dry-run", "proposal-only"}:
+        return False, f"Modo {mode}: solo se generan propuestas, no se modifican archivos."
+    if mode == "apply-safe":
+        return False, "apply-safe aun no esta habilitado; se deja como propuesta revisable."
+    if proposal.fix_type == "manual_review":
+        return False, "La propuesta requiere revision humana."
+    return False, "Modo de reparacion no reconocido; se bloquea por seguridad."
