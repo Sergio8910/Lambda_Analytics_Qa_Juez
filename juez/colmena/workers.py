@@ -293,19 +293,25 @@ class AgentPromptWorker(BaseWorker):
             lower = text.lower()
             if not ("prompt" in lower or "system" in lower or "agente" in lower):
                 continue
-            if "ignora instrucciones" in lower or "ignore previous instructions" in lower:
-                out.append(self.f.make(
-                    severity="high",
-                    category="prompt",
-                    title="Prompt vulnerable a inyeccion",
-                    description="El prompt o documentacion contiene patrones de jailbreak sin mitigacion clara.",
-                    file=rel,
-                    evidence="ignore/ignora instrucciones",
-                    impact="El agente puede obedecer instrucciones maliciosas o fuera de alcance.",
-                    recommendation="Agregar guardrails contra cambios de rol, exfiltracion y tool injection.",
-                    auto_fix_available=True,
-                    source=self.source,
-                ))
+            # Deteccion POR LINEA (no de todo el archivo): permite reportar el
+            # fragmento exacto para que el fixer pueda eliminarlo, no solo
+            # agregar guardrails encima (causa raiz vs sintoma).
+            for line_no, raw_line in enumerate(text.splitlines(), start=1):
+                lower_line = raw_line.lower()
+                if "ignora instrucciones" in lower_line or "ignore previous instructions" in lower_line:
+                    out.append(self.f.make(
+                        severity="high",
+                        category="prompt",
+                        title="Prompt vulnerable a inyeccion",
+                        description="El prompt o documentacion contiene patrones de jailbreak sin mitigacion clara.",
+                        file=rel,
+                        line=line_no,
+                        evidence=raw_line.strip(),
+                        impact="El agente puede obedecer instrucciones maliciosas o fuera de alcance.",
+                        recommendation="Eliminar la instruccion de jailbreak especifica y agregar guardrails.",
+                        auto_fix_available=True,
+                        source=self.source,
+                    ))
             if "api_key" in lower or "token" in lower or "password" in lower:
                 out.append(self.f.make(
                     severity="critical",

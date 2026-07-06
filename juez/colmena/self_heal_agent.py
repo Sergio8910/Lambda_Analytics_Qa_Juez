@@ -41,7 +41,10 @@ def run_self_heal(
     enable_generic_fixer: bool = False,
     max_attempts_per_finding: int = 3,
     time_limit_per_finding_min: int = 10,
+    generic_fixer_generator=None,
 ) -> SelfHealResult:
+    """generic_fixer_generator: hook de testabilidad para inyectar un generador
+    stub en lugar del LLM real (usado en validaciones locales). None = default."""
     root = Path(project_path).resolve()
     started = datetime.now(UTC).isoformat()
     result = SelfHealResult(
@@ -88,10 +91,12 @@ def run_self_heal(
         if plan.fix_type == "manual_review" and enable_generic_fixer and rules_report is not None:
             from .generic_fixer import attempt_generic_fix, to_self_heal_plan
 
+            kwargs = {"generator": generic_fixer_generator} if generic_fixer_generator is not None else {}
             outcome = attempt_generic_fix(
                 root, finding, rules_report,
                 max_attempts=max_attempts_per_finding,
                 time_limit_per_finding_min=time_limit_per_finding_min,
+                **kwargs,
             )
             iteration.generic_fixer_attempts = [
                 {
@@ -104,6 +109,8 @@ def run_self_heal(
             generic_plan = to_self_heal_plan(finding, outcome)
             if generic_plan is not None:
                 plan = generic_plan
+            elif outcome.skip_reason:
+                plan.reason = f"Fixer generico no intento nada: {outcome.skip_reason}"
             elif outcome.attempted:
                 plan.reason = (
                     f"Fixer generico agoto {len(outcome.attempts)} intento(s) sin candidato aprobado; "
@@ -116,7 +123,10 @@ def run_self_heal(
         allowed, blocked_reason = _entry_gate(root, plan, min_confidence, max_lines_per_fix)
         if not allowed:
             iteration.decision = "blocked"
-            iteration.reason = blocked_reason or "Bloqueado por gate de entrada."
+            detalle = blocked_reason or "Bloqueado por gate de entrada."
+            if plan.reason and plan.reason not in detalle:
+                detalle = f"{detalle} | {plan.reason}"
+            iteration.reason = detalle
             result.human_review_required.append(
                 _review_item(finding, iteration.reason, generic_attempts=iteration.generic_fixer_attempts)
             )
@@ -193,8 +203,31 @@ def _plan_fix(root: Path, finding) -> SelfHealFixPlan:
         after = _PRIVATE_URL_RE.sub("example.invalid", before)
         return _plan(finding, "n8n_replace_private_url", 0.9, before, after, "Reemplazar URL privada por placeholder seguro.")
     if finding.category == "prompt" and path.suffix.lower() in {".txt", ".md", ".json"}:
-        if "Reglas de seguridad y calidad:" not in before:
-            return _plan(finding, "prompt_add_guardrails", 0.88, before, before.rstrip() + _GUARDRAILS, "Agregar guardrails al prompt.")
+        if "Reglas de seguridad y calidad:" in before:
+            return _manual(finding, "El prompt ya tiene guardrails; no hay fixer fijo aplicable.")
+        if finding.line and finding.evidence:
+            # Ataca causa raiz: elimina el fragmento especifico senalado por el
+            # detector, no solo agrega guardrails encima (eso deja el sintoma
+            # original intacto y el gate de salida lo detecta y revierte).
+            sin_fragmento = _remove_line_if_matches(before, finding.line, finding.evidence)
+            if sin_fragmento is not None:
+                after = sin_fragmento.rstrip() + _GUARDRAILS
+                if after != before:
+                    return _plan(
+                        finding, "prompt_add_guardrails", 0.90, before, after,
+                        "Eliminar la instruccion problematica especifica y agregar guardrails.",
+                    )
+            return _manual(
+                finding,
+                "El fragmento senalado ya no coincide con el archivo actual; requiere el fixer generico.",
+            )
+        # Deteccion generica (sin fragmento localizable): agregar guardrails a
+        # ciegas no resuelve la causa raiz. Se enruta al fixer generico, que
+        # SI valida contra el detector real en sandbox antes de aplicar.
+        return _manual(
+            finding,
+            "Deteccion generica sin fragmento especifico; requiere el fixer generico (ciclo sandbox).",
+        )
     return _manual(finding, "No hay fixer autonomo confiable para este hallazgo.")
 
 
@@ -238,23 +271,26 @@ def _entry_gate(root: Path, plan: SelfHealFixPlan, min_confidence: float, max_li
 
 
 def _exit_gate(finding, before_report, after_report) -> tuple[bool, str]:
+    """MANTENER si: (a) el hallazgo especifico ya no aparece, Y (b) no hay
+    nuevos criticos, Y (c) el score no empeoro (puede quedar igual: el
+    tope de penalizacion por categoria puede esconder una mejora real que
+    no mueve el numero agregado, y eso no debe forzar un rollback)."""
     if after_report.score.critical_findings > before_report.score.critical_findings:
         return False, "Aparecieron nuevos criticos."
-    if after_report.score.score <= before_report.score.score:
-        return False, "El score no mejoro despues del fix."
+    if after_report.score.score < before_report.score.score:
+        return False, "El score empeoro despues del fix."
     if not _finding_improved(finding, after_report.findings):
-        return False, "El hallazgo objetivo persiste sin bajar severidad."
-    return True, "Score mejoro, sin nuevos criticos y hallazgo objetivo mitigado."
+        return False, "El hallazgo objetivo persiste tras el fix (no resuelto)."
+    return True, "El hallazgo objetivo se resolvio, sin nuevos criticos y sin empeorar el score."
 
 
 def _finding_improved(finding, after_findings) -> bool:
-    before_rank = _SEVERITY_ORDER.get(finding.severity, 9)
+    """Resuelto = la misma firma (archivo+titulo+categoria) YA NO APARECE en la
+    re-evaluacion. No basta con que persista con menor severidad: eso dejaba
+    pasar fixes superficiales que tapan el sintoma sin atacar la causa raiz."""
     for item in after_findings:
-        same_file = item.file == finding.file
-        same_title = item.title == finding.title
-        same_category = item.category == finding.category
-        if same_file and same_title and same_category:
-            return _SEVERITY_ORDER.get(item.severity, 9) > before_rank
+        if item.file == finding.file and item.title == finding.title and item.category == finding.category:
+            return False
     return True
 
 
@@ -276,6 +312,21 @@ def _target_allowed(root: Path, relative_path: str) -> tuple[bool, str | None]:
     if any(part in lower for part in ("auth", "authorization", "payment", "billing", "pricing", "migration", "schema")):
         return False, "Archivo de auth/pagos/migracion/esquema en blocklist duro."
     return True, None
+
+
+def _remove_line_if_matches(text: str, line_no: int, expected: str) -> str | None:
+    """Elimina la linea `line_no` (1-indexada) SOLO si su contenido coincide con
+    `expected`. Evita borrar la linea equivocada si el archivo ya cambio desde
+    que se detecto el hallazgo (defensivo: numeros de linea pueden quedar
+    desalineados tras un fix previo en el mismo archivo)."""
+    lines = text.splitlines()
+    idx = line_no - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    if lines[idx].strip() != expected.strip():
+        return None
+    del lines[idx]
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
 
 
 def _add_timeout(text: str) -> str:
