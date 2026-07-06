@@ -27,6 +27,8 @@ from .patch_report import render_patch_plan_report, write_patch_plan_outputs
 from .project_evaluator import evaluate_project_path, render_project_report, write_project_outputs
 from .reina import ReinaColmena
 from .repair_report import render_repair_report
+from .self_heal_agent import run_self_heal
+from .self_heal_report import render_self_heal_report, write_self_heal_report
 
 __all__ = [
     "AutoFixAgentResult",
@@ -50,13 +52,16 @@ __all__ = [
     "render_patch_plan_report",
     "render_project_report",
     "render_repair_report",
+    "render_self_heal_report",
     "run_project_repair_loop",
     "run_auto_fix_agent",
     "run_colmena",
+    "run_self_heal",
     "validate_approval_file",
     "write_approval_manifest",
     "write_patch_apply_report",
     "write_patch_approval_report",
     "write_patch_plan_outputs",
     "write_project_outputs",
+    "write_self_heal_report",
 ]

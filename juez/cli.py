@@ -14,10 +14,10 @@ from dotenv import load_dotenv
 from juez.colmena import (
     Componente,
     ReinaColmena,
+    apply_approved_patches,
     build_approval_manifest,
     build_patch_approval_report,
     export_patch_plan_items,
-    apply_approved_patches,
     render_auto_fix_agent_report,
     render_colmena_report,
     render_patch_apply_report,
@@ -25,13 +25,16 @@ from juez.colmena import (
     render_patch_plan_report,
     render_project_report,
     render_repair_report,
+    render_self_heal_report,
+    run_self_heal,
     validate_approval_file,
     write_approval_manifest,
     write_patch_apply_report,
     write_patch_approval_report,
-    run_project_repair_loop,
     write_patch_plan_outputs,
     write_project_outputs,
+    write_self_heal_report,
+    run_project_repair_loop,
 )
 from juez.colmena.models import RepairLoopConfig
 from juez.colmena.patch_planner import build_patch_plan
@@ -51,7 +54,7 @@ def main() -> None:
     colmena.add_argument("--min-confidence", type=float, default=0.80, help="Confianza minima para aplicar fixes")
     colmena.add_argument(
         "--repair-mode",
-        choices=["dry-run", "proposal-only", "apply-safe"],
+        choices=["dry-run", "proposal-only", "apply-safe", "autonomous"],
         default=None,
         help="Activa repair loop para carpetas. apply-safe aun se ejecuta como propuesta segura.",
     )
@@ -73,6 +76,8 @@ def main() -> None:
     )
     colmena.add_argument("--no-apply", action="store_true", help="Re-evalua en memoria, sin escribir cambios")
     colmena.add_argument("--no-git", action="store_true", help="No crear backup branch ni commits automaticos")
+    colmena.add_argument("--max-lines-per-fix", type=int, default=40, help="Maximo de lineas por fix autonomo")
+    colmena.add_argument("--fast-reeval", action="store_true", help="Reserva para reevaluacion selectiva")
 
     sub.add_parser("evaluate-agent", help="Fallback historico: use juez/evaluar_elevenlabs.py")
     sub.add_parser("evaluate-workflow", help="Fallback historico: use juez/evaluar_n8n.py")
@@ -96,6 +101,22 @@ def _run_colmena(args: argparse.Namespace) -> None:
     if not project_path.exists():
         raise SystemExit(f"El proyecto no existe: {project_path}")
     if project_path.is_dir():
+        if args.repair_mode == "autonomous":
+            result = write_self_heal_report(
+                run_self_heal(
+                    project_path,
+                    min_confidence=args.min_confidence,
+                    max_iterations=args.max_iterations,
+                    max_lines_per_fix=args.max_lines_per_fix,
+                    fast_reeval=args.fast_reeval,
+                )
+            )
+            print(render_self_heal_report(result))
+            print(f"\nSelf-heal report guardado en: {result.txt_report_path}")
+            print(f"Self-heal JSON guardado en: {result.json_report_path}")
+            print(f"Audit log guardado en: {result.audit_log_path}")
+            return
+
         if args.apply_approved_patches:
             if not args.approval_file:
                 raise SystemExit("--apply-approved-patches requiere --approval-file")

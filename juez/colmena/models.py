@@ -10,7 +10,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
-RepairMode = Literal["dry-run", "proposal-only", "apply-safe"]
+RepairMode = Literal["dry-run", "proposal-only", "apply-safe", "autonomous"]
 RepairVerdict = Literal["passed", "failed", "blocked", "improved", "not_improved"]
 CaseType = Literal[
     "n8n_workflow",

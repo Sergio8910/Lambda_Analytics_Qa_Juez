@@ -31,6 +31,8 @@ from .patch_report import render_patch_plan_report, write_patch_plan_outputs
 from .project_evaluator import render_project_report, write_project_outputs
 from .reina import ReinaColmena
 from .repair_report import render_repair_report
+from .self_heal_agent import run_self_heal
+from .self_heal_report import render_self_heal_report, write_self_heal_report
 
 
 def main() -> None:
@@ -44,7 +46,7 @@ def main() -> None:
     p.add_argument("--min-confidence", type=float, default=0.80, help="Confianza minima para aplicar fixes")
     p.add_argument(
         "--repair-mode",
-        choices=["dry-run", "proposal-only", "apply-safe"],
+        choices=["dry-run", "proposal-only", "apply-safe", "autonomous"],
         default=None,
         help="Activa repair loop para carpetas. apply-safe aun se ejecuta como propuesta segura.",
     )
@@ -66,12 +68,30 @@ def main() -> None:
     )
     p.add_argument("--no-apply", action="store_true", help="Re-evalua en memoria, sin escribir cambios")
     p.add_argument("--no-git", action="store_true", help="No crear backup branch ni commits automaticos")
+    p.add_argument("--max-lines-per-fix", type=int, default=40, help="Maximo de lineas por fix autonomo")
+    p.add_argument("--fast-reeval", action="store_true", help="Reserva para reevaluacion selectiva")
     args = p.parse_args()
 
     project_path = Path(args.project)
     if not project_path.exists():
         raise SystemExit(f"El proyecto no existe: {project_path}")
     if project_path.is_dir():
+        if args.repair_mode == "autonomous":
+            result = write_self_heal_report(
+                run_self_heal(
+                    project_path,
+                    min_confidence=args.min_confidence,
+                    max_iterations=args.max_iterations,
+                    max_lines_per_fix=args.max_lines_per_fix,
+                    fast_reeval=args.fast_reeval,
+                )
+            )
+            print(render_self_heal_report(result))
+            print(f"\nSelf-heal report guardado en: {result.txt_report_path}")
+            print(f"Self-heal JSON guardado en: {result.json_report_path}")
+            print(f"Audit log guardado en: {result.audit_log_path}")
+            return
+
         if args.apply_approved_patches:
             if not args.approval_file:
                 raise SystemExit("--apply-approved-patches requiere --approval-file")
