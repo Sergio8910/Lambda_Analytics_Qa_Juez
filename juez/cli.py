@@ -16,12 +16,15 @@ from juez.colmena import (
     ReinaColmena,
     render_auto_fix_agent_report,
     render_colmena_report,
+    render_patch_plan_report,
     render_project_report,
     render_repair_report,
     run_project_repair_loop,
+    write_patch_plan_outputs,
     write_project_outputs,
 )
 from juez.colmena.models import RepairLoopConfig
+from juez.colmena.patch_planner import build_patch_plan
 
 
 def main() -> None:
@@ -41,6 +44,11 @@ def main() -> None:
         choices=["dry-run", "proposal-only", "apply-safe"],
         default=None,
         help="Activa repair loop para carpetas. apply-safe aun se ejecuta como propuesta segura.",
+    )
+    colmena.add_argument(
+        "--generate-diffs",
+        action="store_true",
+        help="Genera previews de patches seguros desde el repair loop. No aplica cambios.",
     )
     colmena.add_argument("--no-apply", action="store_true", help="Re-evalua en memoria, sin escribir cambios")
     colmena.add_argument("--no-git", action="store_true", help="No crear backup branch ni commits automaticos")
@@ -67,18 +75,24 @@ def _run_colmena(args: argparse.Namespace) -> None:
     if not project_path.exists():
         raise SystemExit(f"El proyecto no existe: {project_path}")
     if project_path.is_dir():
-        if args.repair_mode:
+        if args.repair_mode or args.generate_diffs:
+            repair_mode = args.repair_mode or "proposal-only"
             result = run_project_repair_loop(
                 project_path,
                 RepairLoopConfig(
                     cases_count=args.cases,
                     max_iterations=args.max_iterations,
-                    repair_mode=args.repair_mode,
+                    repair_mode=repair_mode,
                 ),
             )
             print(render_repair_report(result))
             print(f"\nReporte guardado en: {result.txt_report_path}")
             print(f"JSON guardado en: {result.json_report_path}")
+            if args.generate_diffs:
+                patch_plan = write_patch_plan_outputs(build_patch_plan(result, mode=repair_mode))
+                print("\n" + render_patch_plan_report(patch_plan))
+                print(f"\nPatch plan guardado en: {patch_plan.txt_report_path}")
+                print(f"Patch plan JSON guardado en: {patch_plan.json_report_path}")
             return
         reina = ReinaColmena.from_project_path(
             project_path,

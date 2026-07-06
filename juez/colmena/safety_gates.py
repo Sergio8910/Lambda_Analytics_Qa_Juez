@@ -15,6 +15,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from .models import ProjectFixProposal
+from .patch_models import PatchPlanItem
 
 
 class SafetyGateResult(BaseModel):
@@ -125,3 +126,29 @@ def can_apply_fix(proposal: ProjectFixProposal, mode: str) -> tuple[bool, str | 
     if proposal.fix_type == "manual_review":
         return False, "La propuesta requiere revision humana."
     return False, "Modo de reparacion no reconocido; se bloquea por seguridad."
+
+
+def can_generate_patch(proposal: ProjectFixProposal, project_path: str) -> tuple[bool, str | None]:
+    """Permite solo diffs preview de bajo riesgo o reportes de revision.
+
+    ``project_path`` queda en la firma para que futuras reglas puedan validar
+    contexto del proyecto sin cambiar el contrato.
+    """
+    _ = project_path
+    if proposal.fix_type in {"add_env_example", "add_documentation", "add_test", "manual_review"}:
+        return True, None
+    return (
+        False,
+        "Diff no generado: la propuesta modifica codigo, prompts, workflows o configuracion productiva.",
+    )
+
+
+def can_apply_patch_item(item: PatchPlanItem, mode: str) -> tuple[bool, str | None]:
+    """Bloquea la aplicacion real de patches en esta fase."""
+    if mode in {"dry-run", "proposal-only"}:
+        return False, f"Modo {mode}: solo se generan diffs preview, no se modifican archivos."
+    if mode == "apply-safe":
+        return False, "apply-safe aun no esta habilitado para patches; queda como preview revisable."
+    if item.requires_review:
+        return False, "El patch requiere revision humana."
+    return False, "Modo de patch no reconocido; se bloquea por seguridad."

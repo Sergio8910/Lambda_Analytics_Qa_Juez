@@ -12,6 +12,8 @@ from .auto_fix_agent import AutoFixAgentResult, render_auto_fix_agent_report, ru
 from .colmena import ColmenaResult, Componente, render_colmena_report, run_colmena
 from .iteration_loop import run_project_repair_loop
 from .models import NormalizedFinding, ProjectEvaluationReport, ProjectInventory
+from .patch_models import PatchPlan, PatchPlanItem
+from .patch_report import render_patch_plan_report, write_patch_plan_outputs
 from .project_evaluator import evaluate_project_path, render_project_report, write_project_outputs
 from .reina import ReinaColmena
 from .repair_report import render_repair_report
@@ -23,14 +25,18 @@ __all__ = [
     "NormalizedFinding",
     "ProjectEvaluationReport",
     "ProjectInventory",
+    "PatchPlan",
+    "PatchPlanItem",
     "ReinaColmena",
     "evaluate_project_path",
     "render_auto_fix_agent_report",
     "render_colmena_report",
+    "render_patch_plan_report",
     "render_project_report",
     "render_repair_report",
     "run_project_repair_loop",
     "run_auto_fix_agent",
     "run_colmena",
+    "write_patch_plan_outputs",
     "write_project_outputs",
 ]
