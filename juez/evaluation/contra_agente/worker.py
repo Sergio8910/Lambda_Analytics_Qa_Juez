@@ -261,6 +261,9 @@ class ConversationWorker:
                 adaptive_branch=branch,
                 message_fragments=message_fragments,
             )
+            transport_debug = getattr(self.adapter, "last_debug", None)
+            if transport_debug:
+                turn_result.transport_debug = dict(transport_debug)
             turn_results.append(turn_result)
 
             # 6. Detectar colapso en turnos críticos

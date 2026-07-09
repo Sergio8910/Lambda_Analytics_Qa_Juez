@@ -1,10 +1,10 @@
-"""Runners no-interactivos para los evaluadores del Juez.
+﻿"""Runners no-interactivos para los evaluadores del Juez.
 
-Estos wrappers ejecutan exactamente la misma lógica que `evaluar_elevenlabs.py`,
+Estos wrappers ejecutan exactamente la misma lÃ³gica que `evaluar_elevenlabs.py`,
 `evaluar_n8n.py` y `evaluar_pipeline.py`, pero sin prompts interactivos.
-Reciben todos los parámetros como argumentos y retornan un dict serializable.
+Reciben todos los parÃ¡metros como argumentos y retornan un dict serializable.
 
-La carga de los módulos se hace dinámicamente con `importlib.util` para no
+La carga de los mÃ³dulos se hace dinÃ¡micamente con `importlib.util` para no
 forzar refactor de los scripts existentes.
 """
 from __future__ import annotations
@@ -16,26 +16,27 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
-# Ruta al root del proyecto (donde están evaluar_*.py)
+# Ruta al root del proyecto (donde estÃ¡n evaluar_*.py)
 _ROOT = Path(__file__).resolve().parent.parent
 
 
 # =============================================================================
-# CARGA DINÁMICA DE MÓDULOS
+# CARGA DINÃMICA DE MÃ“DULOS
 # =============================================================================
 
 _modules_cache: Dict[str, Any] = {}
 
 
 def _load_module(name: str) -> Any:
-    """Carga un módulo evaluar_*.py por nombre, con caché."""
+    """Carga un mÃ³dulo evaluar_*.py por nombre, con cachÃ©."""
     if name in _modules_cache:
         return _modules_cache[name]
     path = _ROOT / f"{name}.py"
     if not path.exists():
-        raise FileNotFoundError(f"No se encontró {path}")
-    # Asegurar que el root esté en sys.path para imports relativos del módulo
+        raise FileNotFoundError(f"No se encontrÃ³ {path}")
+    # Asegurar que el root estÃ© en sys.path para imports relativos del mÃ³dulo
     root_str = str(_ROOT)
     if root_str not in sys.path:
         sys.path.insert(0, root_str)
@@ -85,13 +86,32 @@ def _resolve_n8n_flow(
                     webhook = ""
         return wf, webhook, nombre
 
-    # Caso 2: URL o ID — descargar via API
+    # Caso 2: URL directa de webhook. No hay workflow JSON para descargar, pero
+    # si el usuario guardo el agente como /webhook/... debe poder ejecutarse.
     url_o_id = flow_dict.get("url") or flow_dict.get("workflow_id")
     if not url_o_id:
         raise ValueError(
             "Cada flujo n8n debe traer 'json_content', 'url' o 'workflow_id'"
         )
+    url_o_id = str(url_o_id).strip()
+    parsed = urlparse(url_o_id)
+    if parsed.scheme in {"http", "https"} and ("/webhook/" in parsed.path or "/webhook-test/" in parsed.path):
+        path = parsed.path.split("/webhook/", 1)[-1].split("/webhook-test/", 1)[-1].strip("/")
+        nombre = path or "webhook-n8n"
+        wf = {
+            "name": nombre,
+            "nodes": [
+                {
+                    "name": "Webhook Entrada",
+                    "type": "n8n-nodes-base.webhook",
+                    "parameters": {"path": path},
+                }
+            ],
+            "connections": {},
+        }
+        return wf, webhook_override or url_o_id, nombre
 
+    # Caso 3: URL de workflow o ID â€” descargar via API
     base_url_extraida, wf_id = n8n_mod._parsear_url_workflow(url_o_id)
     base_url = base_url_extraida or n8n_base_url or os.getenv("N8N_BASE_URL", "")
     api_key = n8n_api_key or os.getenv("N8N_API_KEY", "")
@@ -176,6 +196,215 @@ def _guardar_reporte_txt(nombre: str, contenido: str, kind: str) -> str:
     return str(path)
 
 
+def _sev_rank(sev: str) -> int:
+    return {"CRITICO": 0, "ALTO": 1, "MEDIO": 2, "BAJO": 3}.get(str(sev).upper(), 4)
+
+
+def _classify_problem(p: Dict[str, Any]) -> str:
+    txt = " ".join(str(p.get(k, "")) for k in ("tipo", "descripcion", "nodo", "recomendacion")).lower()
+    if any(k in txt for k in ("seguridad", "auth", "token", "api key", "credential", "credencial", "secret", "ssrf", "inyeccion", "prompt injection")):
+        return "seguridad"
+    if any(k in txt for k in ("http", "webhook", "schema", "parser", "rag", "modelo", "timeout", "api", "nodo", "tool", "codigo", "javascript")):
+        return "tecnico"
+    return "funcional"
+
+
+def _problem_to_item(p: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "severidad": str(p.get("severidad") or "INFO"),
+        "titulo": str(p.get("tipo") or p.get("nodo") or "Hallazgo"),
+        "detalle": str(p.get("descripcion") or p.get("detalle") or "")[:700],
+        "componente": str(p.get("nodo") or p.get("componente") or ""),
+        "recomendacion": str(p.get("recomendacion") or p.get("accion") or "")[:500],
+    }
+
+
+def _batch_focus_summary(batch_result: Any) -> Dict[str, Any]:
+    if not batch_result:
+        return {
+            "ejecutadas": False,
+            "total": 0,
+            "aprobadas": 0,
+            "fallidas": 0,
+            "pass_rate": 0,
+            "categorias": {},
+            "fallos_representativos": [],
+            "evidencia_tecnica": [],
+        }
+    failures = []
+    evidence = []
+    for r in getattr(batch_result, "results", []) or []:
+        if not getattr(r, "passed", False) and len(failures) < 5:
+            failures.append({
+                "plan_id": getattr(r, "plan_id", ""),
+                "categoria": getattr(r, "category", ""),
+                "diagnostico": getattr(r, "diagnosis", ""),
+                "score": round(float(getattr(r, "overall_score", 0.0)) * 100),
+            })
+        for tr in getattr(r, "turn_results", []) or []:
+            dbg = getattr(tr, "transport_debug", None)
+            if dbg and len(evidence) < 8:
+                evidence.append({
+                    "plan_id": getattr(r, "plan_id", ""),
+                    "turno": getattr(tr, "turn_id", None),
+                    "categoria": getattr(r, "category", ""),
+                    "debug": _strip_non_serializable(dbg),
+                })
+    return {
+        "ejecutadas": True,
+        "total": int(getattr(batch_result, "total", 0)),
+        "aprobadas": int(getattr(batch_result, "passed", 0)),
+        "fallidas": int(getattr(batch_result, "failed", 0)),
+        "pass_rate": round(float(getattr(batch_result, "pass_rate", 0.0)) * 100),
+        "categorias": _strip_non_serializable(getattr(batch_result, "by_category", {})),
+        "fallos_representativos": failures,
+        "evidencia_tecnica": evidence,
+    }
+
+
+def _build_informe_enfoques(
+    *,
+    kind: str,
+    nombre: str,
+    score_general: float,
+    problemas: List[Dict[str, Any]],
+    batch_result: Any = None,
+    trigger: Optional[Dict[str, Any]] = None,
+    webhook_status: str = "",
+    nodos: Optional[List[Dict[str, Any]]] = None,
+    flujos_fallidos: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    problemas = [p for p in (problemas or []) if isinstance(p, dict)]
+    problemas_sorted = sorted(problemas, key=lambda p: _sev_rank(str(p.get("severidad", ""))))
+    por_enfoque = {"funcional": [], "tecnico": [], "seguridad": []}
+    for p in problemas_sorted:
+        por_enfoque[_classify_problem(p)].append(_problem_to_item(p))
+
+    dyn = _batch_focus_summary(batch_result)
+    score = round(float(score_general or 0.0))
+    estado = "saludable" if score >= 85 else "requiere ajustes" if score >= 70 else "critico"
+    trigger = trigger or {}
+    flujos_fallidos = flujos_fallidos or []
+    nodos = nodos or []
+
+    funcional_checks = [
+        "Conversaciones happy path y de usuario cooperativo",
+        "Recorrido completo del agente cuando hay herramientas o varios pasos",
+        "Memoria de contexto entre turnos",
+        "Manejo de datos incompletos, usuario agresivo y casos fuera de dominio",
+    ]
+    tecnico_checks = [
+        "Estructura del flujo/agente, nodos, conexiones y salidas",
+        "Disponibilidad del webhook o canal de ejecucion real",
+        "Payload enviado y respuesta observada por turno",
+        "Schemas, parsers, RAG, tools, timeouts y errores HTTP",
+    ]
+    seguridad_checks = [
+        "Exposicion de credenciales o API keys",
+        "Autenticacion de webhooks y herramientas",
+        "Resistencia a manipulacion/prompt injection",
+        "Riesgos de fuga de datos o acciones fuera de permiso",
+    ]
+
+    return {
+        "version": "2026-07-09",
+        "nombre": nombre,
+        "tipo": kind,
+        "score_general": score,
+        "estado": estado,
+        "resumen": (
+            f"Se evaluo {nombre} con enfoque funcional, tecnico y de seguridad. "
+            f"Score general: {score}/100. "
+            f"Pruebas dinamicas: {'si' if dyn['ejecutadas'] else 'no'}"
+            f"{' (' + str(dyn['aprobadas']) + '/' + str(dyn['total']) + ' aprobadas)' if dyn['ejecutadas'] else ''}."
+        ),
+        "funcional": {
+            "estado": "bien" if not por_enfoque["funcional"] and score >= 80 else "revisar",
+            "que_se_evaluo": funcional_checks,
+            "hallazgos": por_enfoque["funcional"][:8],
+            "pruebas": {
+                "total": dyn["total"],
+                "aprobadas": dyn["aprobadas"],
+                "fallidas": dyn["fallidas"],
+                "pass_rate": dyn["pass_rate"],
+                "categorias": dyn["categorias"],
+                "fallos_representativos": dyn["fallos_representativos"],
+            },
+        },
+        "tecnico": {
+            "estado": "bien" if not por_enfoque["tecnico"] and not flujos_fallidos else "revisar",
+            "que_se_evaluo": tecnico_checks,
+            "hallazgos": por_enfoque["tecnico"][:10],
+            "trigger": _strip_non_serializable(trigger),
+            "webhook_status": webhook_status,
+            "nodos": _strip_non_serializable(nodos[:12]),
+            "flujos_fallidos": _strip_non_serializable(flujos_fallidos),
+            "evidencia": dyn["evidencia_tecnica"],
+        },
+        "seguridad": {
+            "estado": "bien" if not por_enfoque["seguridad"] else "revisar",
+            "que_se_evaluo": seguridad_checks,
+            "hallazgos": por_enfoque["seguridad"][:10],
+        },
+        "recomendaciones_rapidas": _build_recomendaciones_rapidas(por_enfoque, dyn, flujos_fallidos),
+    }
+
+
+def _build_recomendaciones_rapidas(por_enfoque: Dict[str, List[Dict[str, Any]]], dyn: Dict[str, Any], flujos_fallidos: List[Dict[str, Any]]) -> List[str]:
+    recs: List[str] = []
+    if dyn.get("ejecutadas") and dyn.get("pass_rate", 100) < 80:
+        recs.append("Revisar los turnos fallidos: el agente no esta completando consistentemente el flujo conversacional.")
+    if dyn.get("evidencia_tecnica"):
+        recs.append("Comparar el payload enviado por el Juez con los campos que el webhook espera en n8n.")
+    if flujos_fallidos:
+        recs.append("Resolver los flujos que no pudieron analizarse antes de confiar en el score global.")
+    if por_enfoque.get("seguridad"):
+        recs.append("Atender primero los hallazgos de seguridad: credenciales, autenticacion o manipulacion del agente.")
+    if por_enfoque.get("tecnico"):
+        recs.append("Corregir schemas, tools, webhooks o errores HTTP antes de repetir la prueba real.")
+    if not recs:
+        recs.append("Mantener monitoreo recurrente y repetir pruebas reales despues de cambios del agente.")
+    return recs[:6]
+
+
+def _render_informe_enfoques_txt(informe: Dict[str, Any]) -> str:
+    lines: List[str] = []
+    lines.append("")
+    lines.append("=" * 80)
+    lines.append("  INFORME POR ENFOQUES")
+    lines.append("=" * 80)
+    lines.append("")
+    lines.append(f"  Resumen: {informe.get('resumen', '')}")
+    for key, title in (("funcional", "FUNCIONAL"), ("tecnico", "TECNICO"), ("seguridad", "SEGURIDAD")):
+        sec = informe.get(key, {}) or {}
+        lines.append("")
+        lines.append(f"  {title}")
+        lines.append("  " + "-" * len(title))
+        lines.append(f"  Estado: {sec.get('estado', 'sin dato')}")
+        checks = sec.get("que_se_evaluo") or []
+        if checks:
+            lines.append("  Que se evaluo:")
+            for c in checks:
+                lines.append(f"    - {c}")
+        hallazgos = sec.get("hallazgos") or []
+        if hallazgos:
+            lines.append("  Hallazgos principales:")
+            for h in hallazgos[:6]:
+                prefix = f"[{h.get('severidad', 'INFO')}] {h.get('titulo', 'Hallazgo')}"
+                detail = h.get("detalle") or ""
+                lines.append(f"    - {prefix}: {detail[:220]}")
+        else:
+            lines.append("  Hallazgos principales: sin hallazgos criticos en este enfoque.")
+    recs = informe.get("recomendaciones_rapidas") or []
+    if recs:
+        lines.append("")
+        lines.append("  RECOMENDACIONES RAPIDAS")
+        lines.append("  -----------------------")
+        for r in recs:
+            lines.append(f"    - {r}")
+    return "\n".join(lines)
+
+
 # =============================================================================
 # RUNNERS
 # =============================================================================
@@ -193,7 +422,7 @@ def _run_elevenlabs_branch(
     include_n8n_flows: bool,
     progress_cb: Optional[Callable[[str, int], None]],
 ) -> Dict[str, Any]:
-    """Evalúa un branch de ElevenLabs.
+    """EvalÃºa un branch de ElevenLabs.
 
     Si include_n8n_flows=False: solo el agente bajo el branch (1 nodo).
     Si include_n8n_flows=True : pipeline = agente + flujos n8n llamados via tools.
@@ -217,7 +446,7 @@ def _run_elevenlabs_branch(
     if not include_n8n_flows:
         # Caso simple: solo el agente bajo este branch (no se descubre n8n)
         # Aprovechamos el flujo existente cambiando agent_id por el padre del branch
-        # pero usando la config descargada con el branch_id (que sí refleja la rama).
+        # pero usando la config descargada con el branch_id (que sÃ­ refleja la rama).
         return _evaluar_agente_directo_con_config(
             agent_id=agent_id,
             agent_config=branch_info["agent_config"],
@@ -291,7 +520,7 @@ def _evaluar_agente_directo_con_config(
     elevenlabs_key: str,
     progress: Callable[[str, int], None],
 ) -> Dict[str, Any]:
-    """Evalúa un agente cuando ya tenemos la config descargada (vía branch).
+    """EvalÃºa un agente cuando ya tenemos la config descargada (vÃ­a branch).
 
     Variante de run_elevenlabs_single que no re-descarga el agente sino que
     usa el agent_config ya obtenido del branch.
@@ -302,15 +531,15 @@ def _evaluar_agente_directo_con_config(
         eleven_key = elevenlabs_key or os.getenv("ELEVENLABS_API_KEY", "")
         nombre = agent_config.get("name", agent_id)
 
-        progress(f"Análisis estático: {nombre} (branch {branch_context['branch_name']})", 30)
+        progress(f"AnÃ¡lisis estÃ¡tico: {nombre} (branch {branch_context['branch_name']})", 30)
         analisis = mod.ElevenLabsAnalyzer(agent_config).analizar()
-        # Inyectar contexto del branch en el análisis para que salga en el reporte
+        # Inyectar contexto del branch en el anÃ¡lisis para que salga en el reporte
         analisis["branch_context"] = branch_context
 
         gpt_result: Dict[str, Any] = {}
         oai_key = openai_key or os.getenv("OPENAI_API_KEY", "")
         if oai_key:
-            progress("Análisis profundo con GPT", 45)
+            progress("AnÃ¡lisis profundo con GPT", 45)
             try:
                 gpt_result = mod.analizar_con_gpt(analisis, nombre)
                 analisis["reglas_negocio"] = gpt_result.get("reglas_negocio", {})
@@ -387,7 +616,7 @@ def _evaluar_agente_directo_con_config(
                 )
                 reporte_ca = _rep(batch_result, agent_name=nombre)
             except Exception as exc:
-                reporte_ca = f"\n[CONTRA-AGENTE — Error: {exc}]\n"
+                reporte_ca = f"\n[CONTRA-AGENTE â€” Error: {exc}]\n"
 
         progress("Calculando scorecard", 90)
         scores = mod.calcular_scorecard(analisis, batch_result)
@@ -436,22 +665,22 @@ def run_elevenlabs_single(
     openai_key: str = "",
     elevenlabs_key: str = "",
     progress_cb: Optional[Callable[[str, int], None]] = None,
-    # Nuevos parámetros (T-23):
+    # Nuevos parÃ¡metros (T-23):
     target_id: Optional[str] = None,
     include_n8n_flows: bool = True,
     n8n_api_key: str = "",
     n8n_base_url: str = "",
 ) -> Dict[str, Any]:
-    """Evalúa un recurso de ElevenLabs.
+    """EvalÃºa un recurso de ElevenLabs.
 
     `target_id` (o `agent_id` como alias) puede ser:
-      - agent_*    : se evalúa el agente directo (versión live).
-      - agtbrch_*  : se resuelve al agente padre, se evalúa la config del
-                     agente bajo esa rama. Si include_n8n_flows=True, además
-                     se detectan y evalúan los flujos n8n que llama, y se
+      - agent_*    : se evalÃºa el agente directo (versiÃ³n live).
+      - agtbrch_*  : se resuelve al agente padre, se evalÃºa la config del
+                     agente bajo esa rama. Si include_n8n_flows=True, ademÃ¡s
+                     se detectan y evalÃºan los flujos n8n que llama, y se
                      retorna un resultado tipo pipeline.
 
-    Equivalente programático a `python evaluar_elevenlabs.py <ID>`.
+    Equivalente programÃ¡tico a `python evaluar_elevenlabs.py <ID>`.
     """
     from juez.api.elevenlabs_discovery import detect_id_type
 
@@ -475,8 +704,8 @@ def run_elevenlabs_single(
         )
     if tipo == "version":
         raise ValueError(
-            f"Los version IDs ({resolved}) no se evalúan directamente. "
-            "Pásame el branch_id (agtbrch_*) o el agent_id (agent_*)."
+            f"Los version IDs ({resolved}) no se evalÃºan directamente. "
+            "PÃ¡same el branch_id (agtbrch_*) o el agent_id (agent_*)."
         )
     if tipo == "unknown":
         raise ValueError(
@@ -484,11 +713,11 @@ def run_elevenlabs_single(
             "(esperado: agent_* o agtbrch_*)."
         )
 
-    # tipo == "agent" — flujo original intacto
+    # tipo == "agent" â€” flujo original intacto
     progress = progress_cb or _progress_noop
     previo_env = _setear_env_temporal(openai_key=openai_key, elevenlabs_key=elevenlabs_key)
     try:
-        progress("Cargando módulo ElevenLabs", 5)
+        progress("Cargando mÃ³dulo ElevenLabs", 5)
         mod = _load_module("evaluar_elevenlabs")
 
         eleven_key = elevenlabs_key or os.getenv("ELEVENLABS_API_KEY", "")
@@ -501,13 +730,13 @@ def run_elevenlabs_single(
         data = client.obtener_agente(agent_id_real)
         nombre = data.get("name", agent_id_real)
 
-        progress(f"Análisis estático: {nombre}", 30)
+        progress(f"AnÃ¡lisis estÃ¡tico: {nombre}", 30)
         analisis = mod.ElevenLabsAnalyzer(data).analizar()
 
         gpt_result: Dict[str, Any] = {}
         oai_key = openai_key or os.getenv("OPENAI_API_KEY", "")
         if oai_key:
-            progress("Análisis profundo con GPT", 45)
+            progress("AnÃ¡lisis profundo con GPT", 45)
             try:
                 gpt_result = mod.analizar_con_gpt(analisis, nombre)
                 analisis["reglas_negocio"] = gpt_result.get("reglas_negocio", {})
@@ -590,7 +819,7 @@ def run_elevenlabs_single(
                 )
                 reporte_ca = _rep(batch_result, agent_name=nombre)
             except Exception as exc:
-                reporte_ca = f"\n[CONTRA-AGENTE — Error: {exc}]\n"
+                reporte_ca = f"\n[CONTRA-AGENTE â€” Error: {exc}]\n"
 
         progress("Calculando scorecard", 88)
         scores = mod.calcular_scorecard(analisis, batch_result)
@@ -641,9 +870,10 @@ def run_n8n_single(
     evaluate_artifact: bool = True,
     artifact_agent_id: str = "",
     modo_qa: str = "ambos",
+    modo_ejecucion: str = "sandbox",
     progress_cb: Optional[Callable[[str, int], None]] = None,
 ) -> Dict[str, Any]:
-    """Evalúa un único flujo n8n.
+    """EvalÃºa un Ãºnico flujo n8n.
 
     `flow` es un dict tipo `N8nFlowSource`: {url, workflow_id, json_content, webhook_url}.
     """
@@ -655,23 +885,23 @@ def run_n8n_single(
         progress("Resolviendo origen del flujo n8n", 5)
         wf, webhook_url, nombre = _resolve_n8n_flow(flow, n8n_api_key, n8n_base_url)
 
-        progress(f"Cargando módulo n8n", 10)
+        progress(f"Cargando mÃ³dulo n8n", 10)
         mod = _load_module("evaluar_n8n")
 
-        progress(f"Análisis estático: {nombre}", 25)
+        progress(f"AnÃ¡lisis estÃ¡tico: {nombre}", 25)
         analisis = mod.N8nAnalyzer(wf).analizar()
 
         gpt_result: Dict[str, Any] = {}
         oai_key = openai_key or os.getenv("OPENAI_API_KEY", "")
         if oai_key:
-            progress("Análisis profundo con GPT", 40)
+            progress("AnÃ¡lisis profundo con GPT", 40)
             try:
                 gpt_result = mod.analizar_con_gpt(analisis, nombre)
                 analisis["reglas_negocio"] = gpt_result.get("reglas_negocio", {})
             except Exception:
                 pass
 
-            progress("Validación dinámica de modelos LLM", 50)
+            progress("ValidaciÃ³n dinÃ¡mica de modelos LLM", 50)
             try:
                 analisis = mod.validar_y_enriquecer_modelos(analisis, oai_key)
             except Exception:
@@ -682,13 +912,8 @@ def run_n8n_single(
         reporte_ca = ""
         webhook_activo_msg = ""
         if total_conversaciones > 0 and webhook_url and oai_key:
-            # T-14: verificar webhook activo antes de gastar GPT
-            pipeline_mod = _load_module("evaluar_pipeline")
-            activo, msg = pipeline_mod._verificar_webhook_activo(webhook_url)
-            webhook_activo_msg = msg
-
-            if activo:
-                progress(f"Ejecutando {total_conversaciones} conversaciones", 65)
+            if modo_ejecucion == "sandbox":
+                progress(f"Simulando {total_conversaciones} conversaciones", 65)
                 try:
                     batch_result, reporte_ca = mod.ejecutar_contra_agente(
                         analisis_n8n=analisis,
@@ -697,14 +922,35 @@ def run_n8n_single(
                         total_conv=total_conversaciones,
                         concurrencia=concurrencia,
                         escenarios_extra=escenarios or [],
+                        modo_ejecucion="sandbox",
                     )
+                    webhook_activo_msg = "sandbox: webhook no invocado"
                 except Exception as exc:
-                    reporte_ca = f"\n[CONTRA-AGENTE — Error: {exc}]\n"
+                    reporte_ca = f"\n[CONTRA-AGENTE - Error: {exc}]\n"
             else:
-                reporte_ca = (
-                    "\n[CONTRA-AGENTE] Webhook no activo: " + msg +
-                    "\nActiva el flujo en n8n para correr las pruebas dinámicas.\n"
-                )
+                pipeline_mod = _load_module("evaluar_pipeline")
+                activo, msg = pipeline_mod._verificar_webhook_activo(webhook_url)
+                webhook_activo_msg = msg
+
+                if activo:
+                    progress(f"Ejecutando {total_conversaciones} conversaciones", 65)
+                    try:
+                        batch_result, reporte_ca = mod.ejecutar_contra_agente(
+                            analisis_n8n=analisis,
+                            webhook_url=webhook_url,
+                            agent_name=nombre,
+                            total_conv=total_conversaciones,
+                            concurrencia=concurrencia,
+                            escenarios_extra=escenarios or [],
+                            modo_ejecucion="real",
+                        )
+                    except Exception as exc:
+                        reporte_ca = f"\n[CONTRA-AGENTE - Error: {exc}]\n"
+                else:
+                    reporte_ca = (
+                        "\n[CONTRA-AGENTE] Webhook no activo: " + msg +
+                        "\nActiva el flujo en n8n para correr las pruebas dinamicas.\n"
+                    )
 
         # QA de artefacto (aditivo, opcional)
         artef: Dict[str, Any] = {}
@@ -719,12 +965,16 @@ def run_n8n_single(
             except Exception as exc:
                 artef = {"error": str(exc)}
 
+<<<<<<< Updated upstream
         # Copia SIN filtrar -- el informe no tecnico siempre muestra las 3
         # secciones completas (seguridad/funcional/tecnico), independiente
         # de modo_qa (que solo afecta el score y el reporte tecnico clasico).
         todos_los_problemas = list(analisis.get("problemas", []))
 
         # Modo QA: filtra los hallazgos a técnico / funcional antes de puntuar.
+=======
+        # Modo QA: filtra los hallazgos a tÃ©cnico / funcional antes de puntuar.
+>>>>>>> Stashed changes
         if modo_qa and modo_qa != "ambos":
             from juez.evaluation.qa_mode import filtrar_problemas
             analisis["problemas"] = filtrar_problemas(analisis.get("problemas", []), modo_qa)
@@ -758,6 +1008,16 @@ def run_n8n_single(
             reporte = reporte + "\n\n" + reporte_ca
         if artef and artef.get("reporte"):
             reporte = reporte + "\n\n" + artef["reporte"]
+        informe_enfoques = _build_informe_enfoques(
+            kind="n8n",
+            nombre=nombre,
+            score_general=scores.get("score_general", 0.0),
+            problemas=analisis.get("problemas", []),
+            batch_result=batch_result,
+            trigger=analisis.get("trigger", {}),
+            webhook_status=webhook_activo_msg or ("activo" if batch_result else "no probado"),
+        )
+        reporte = reporte + "\n\n" + _render_informe_enfoques_txt(informe_enfoques)
 
         reporte_path = _guardar_reporte_txt(nombre, reporte, "n8n")
 
@@ -784,6 +1044,7 @@ def run_n8n_single(
             ),
             "reporte_txt": reporte,
             "reporte_path": reporte_path,
+            "informe_enfoques": _strip_non_serializable(informe_enfoques),
             "artifact": _strip_non_serializable(artef) if artef else None,
         }
     finally:
@@ -797,15 +1058,16 @@ def run_pipeline(
     total_conversaciones: int = 20,
     concurrencia: int = 3,
     escenarios: Optional[List[str]] = None,
+    modo_ejecucion: str = "real",
     openai_key: str = "",
     elevenlabs_key: str = "",
     n8n_api_key: str = "",
     n8n_base_url: str = "",
     progress_cb: Optional[Callable[[str, int], None]] = None,
 ) -> Dict[str, Any]:
-    """Evalúa un pipeline completo: 0..N agentes ElevenLabs + 0..M flujos n8n.
+    """EvalÃºa un pipeline completo: 0..N agentes ElevenLabs + 0..M flujos n8n.
 
-    Replica la lógica de `evaluar_pipeline.py main()` sin el menú interactivo.
+    Replica la lÃ³gica de `evaluar_pipeline.py main()` sin el menÃº interactivo.
     """
     progress = progress_cb or _progress_noop
     eleven_ids = eleven_ids or []
@@ -824,7 +1086,7 @@ def run_pipeline(
         oai_key = openai_key or os.getenv("OPENAI_API_KEY", "")
         eleven_key = elevenlabs_key or os.getenv("ELEVENLABS_API_KEY", "")
 
-        progress("Cargando módulos", 3)
+        progress("Cargando mÃ³dulos", 3)
         pipeline_mod = _load_module("evaluar_pipeline")
         n8n_mod = _load_module("evaluar_n8n")
         eleven_mod = _load_module("evaluar_elevenlabs")
@@ -833,7 +1095,7 @@ def run_pipeline(
         previews: List[Dict[str, Any]] = []
         flujos_fallidos: List[Dict[str, str]] = []
 
-        # ── Fase 1: ElevenLabs ────────────────────────────────────────────────
+        # â”€â”€ Fase 1: ElevenLabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         for i, agent_id in enumerate(eleven_ids):
             pct = 5 + int((i / max(total_nodos, 1)) * 30)
             progress(f"Analizando ElevenLabs ({i + 1}/{len(eleven_ids)}): {agent_id}", pct)
@@ -856,7 +1118,7 @@ def run_pipeline(
             except Exception as exc:
                 flujos_fallidos.append({"url": agent_id, "etapa": "analisis", "error": str(exc)})
 
-        # ── Fase 1: n8n ──────────────────────────────────────────────────────
+        # â”€â”€ Fase 1: n8n â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         for i, flow in enumerate(n8n_flows):
             pct = 35 + int((i / max(len(n8n_flows), 1)) * 25)
             origen = flow.get("url") or flow.get("workflow_id") or "flujo-n8n"
@@ -886,18 +1148,18 @@ def run_pipeline(
 
         if not previews:
             raise RuntimeError(
-                "No se pudo analizar ningún nodo. Errores: "
+                "No se pudo analizar ningÃºn nodo. Errores: "
                 + "; ".join(f"{f['url']}: {f['error']}" for f in flujos_fallidos)
             )
 
-        # ── Fase 2: pruebas dinámicas ────────────────────────────────────────
+        # â”€â”€ Fase 2: pruebas dinÃ¡micas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         node_results: List[Any] = []
         for i, pv in enumerate(previews):
             pct = 60 + int((i / max(len(previews), 1)) * 25)
             progress(f"Probando {pv['nombre']} ({i + 1}/{len(previews)})", pct)
             try:
                 result = pipeline_mod._evaluar_con_analisis(
-                    pv, oai_key, total_conversaciones, concurrencia
+                    pv, oai_key, total_conversaciones, concurrencia, modo_ejecucion=modo_ejecucion
                 )
                 node_results.append(result)
             except Exception as exc:
@@ -908,10 +1170,10 @@ def run_pipeline(
                 f"{f['url']} [{f['etapa']}]: {f['error']}" for f in flujos_fallidos
             ) or "(sin detalles)"
             raise RuntimeError(
-                f"No se pudo evaluar ningún nodo en la fase dinámica. Errores: {detalles}"
+                f"No se pudo evaluar ningÃºn nodo en la fase dinÃ¡mica. Errores: {detalles}"
             )
 
-        # ── Grafo del pipeline ───────────────────────────────────────────────
+        # â”€â”€ Grafo del pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         progress("Construyendo grafo del pipeline", 88)
         graph = None
         try:
@@ -932,7 +1194,7 @@ def run_pipeline(
         except Exception:
             graph = None
 
-        # ── Análisis de coherencia ───────────────────────────────────────────
+        # â”€â”€ AnÃ¡lisis de coherencia â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         progress("Analizando coherencia del pipeline", 92)
         analisis_coherencia: Dict[str, Any] = {}
         try:
@@ -970,11 +1232,11 @@ def run_pipeline(
                 "recomendaciones": [], "_error": str(exc),
             }
 
-        # ── Score final del pipeline ─────────────────────────────────────────
+        # â”€â”€ Score final del pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         scores_pipeline = pipeline_mod.calcular_score_pipeline(node_results, analisis_coherencia)
         pipeline_name = nombre or f"Pipeline ({', '.join(r.name for r in node_results[:2])})"
 
-        # ── Reporte ──────────────────────────────────────────────────────────
+        # â”€â”€ Reporte â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         progress("Generando reporte del pipeline", 96)
         reporte_pipeline = ""
         try:
@@ -991,9 +1253,9 @@ def run_pipeline(
                 pipeline_name=pipeline_name,
             )
         except Exception as exc:
-            reporte_pipeline = f"\n[REPORTE DEL PIPELINE — Error: {exc}]\n"
+            reporte_pipeline = f"\n[REPORTE DEL PIPELINE â€” Error: {exc}]\n"
 
-        # Sección de flujos fallidos (si aplica)
+        # SecciÃ³n de flujos fallidos (si aplica)
         if flujos_fallidos:
             SEP80 = "=" * 80
             lineas = [
@@ -1009,11 +1271,19 @@ def run_pipeline(
                 ])
             reporte_pipeline = reporte_pipeline + "\n" + "\n".join(lineas)
 
-        reporte_path = _guardar_reporte_txt(pipeline_name, reporte_pipeline, "pipeline")
 
-        # ── Resultado serializable ──────────────────────────────────────────
+        # â”€â”€ Resultado serializable â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         nodos_out: List[Dict[str, Any]] = []
         for r in node_results:
+            node_informe = _build_informe_enfoques(
+                kind=r.node_type,
+                nombre=r.name,
+                score_general=r.scores.get("score_general", 0.0),
+                problemas=r.analisis.get("problemas", []),
+                batch_result=r.batch_result,
+                trigger=r.analisis.get("trigger", {}) if r.node_type == "n8n" else {},
+                webhook_status="probado" if r.dynamic_tests_ran else "no probado",
+            )
             nodos_out.append({
                 "node_id": r.node_id,
                 "node_type": r.node_type,
@@ -1023,6 +1293,8 @@ def run_pipeline(
                 "problemas": _strip_non_serializable(r.analisis.get("problemas", [])),
                 "trigger": _strip_non_serializable(r.analisis.get("trigger", {})) if r.node_type == "n8n" else None,
                 "dynamic_tests_ran": r.dynamic_tests_ran,
+                "batch_summary": _batch_focus_summary(r.batch_result),
+                "informe_enfoques": _strip_non_serializable(node_informe),
             })
 
         edges_out: List[Dict[str, Any]] = []
@@ -1045,6 +1317,27 @@ def run_pipeline(
                     "description": g.description,
                 })
 
+        problemas_pipeline: List[Dict[str, Any]] = []
+        for r in node_results:
+            problemas_pipeline.extend(r.analisis.get("problemas", []) or [])
+        for f in flujos_fallidos:
+            problemas_pipeline.append({
+                "severidad": "ALTO",
+                "tipo": "Flujo no analizado",
+                "descripcion": f"{f.get('url')} fallo en etapa {f.get('etapa')}: {f.get('error')}",
+                "nodo": f.get("url", ""),
+            })
+        informe_enfoques = _build_informe_enfoques(
+            kind="pipeline",
+            nombre=pipeline_name,
+            score_general=scores_pipeline.get("score_general", 0.0),
+            problemas=problemas_pipeline,
+            nodos=nodos_out,
+            flujos_fallidos=flujos_fallidos,
+        )
+        reporte_pipeline = reporte_pipeline + "\n\n" + _render_informe_enfoques_txt(informe_enfoques)
+        reporte_path = _guardar_reporte_txt(pipeline_name, reporte_pipeline, "pipeline")
+
         return {
             "kind": "pipeline",
             "nombre": pipeline_name,
@@ -1060,6 +1353,116 @@ def run_pipeline(
             "flujos_fallidos": flujos_fallidos,
             "reporte_txt": reporte_pipeline,
             "reporte_path": reporte_path,
+            "informe_enfoques": _strip_non_serializable(informe_enfoques),
         }
+    finally:
+        _restaurar_env(previo_env)
+
+
+def run_proyecto(
+    nombre: str = "Proyecto",
+    prompt: str = "",
+    eleven_ids: Optional[List[str]] = None,
+    n8n_flows: Optional[List[Dict[str, Any]]] = None,
+    total_conversaciones: int = 10,
+    concurrencia: int = 3,
+    escenarios: Optional[List[str]] = None,
+    incluir_conversaciones: bool = True,
+    incluir_dinamicas: bool = False,
+    modo_ejecucion: str = "sandbox",
+    openai_key: str = "",
+    elevenlabs_key: str = "",
+    n8n_api_key: str = "",
+    n8n_base_url: str = "",
+    progress_cb: Optional[Callable[[str, int], None]] = None,
+) -> Dict[str, Any]:
+    """EvaluaciÃ³n UNIFICADA de un proyecto â†’ contrato firme.
+
+    Corre dos motores y los consolida en un solo JSON estable (ver
+    `juez.colmena.mejoras.consolidar_proyecto`):
+
+      1) La Colmena (`run_colmena`): anÃ¡lisis de construcciÃ³n del proyecto
+         (seguridad de tools, flujos, objetivos, calidad del prompt; + obreras
+         dinÃ¡micas opt-in). Barato y determinista en su parte estÃ¡tica.
+      2) Conversaciones (`run_pipeline`): simulaciÃ³n contra el/los agente(s).
+         Opcional (caro / tarda) â€” se corre solo si `incluir_conversaciones`.
+
+    Devuelve `score`, `estado`, `problemas[]` y `mejoras[]`, donde la mejora del
+    prompt trae `antes`/`despues` REALES listos para aplicar.
+    """
+    eleven_ids = eleven_ids or []
+    n8n_flows = n8n_flows or []
+    prompt = (prompt or "").strip()
+
+    if not prompt and not eleven_ids and not n8n_flows:
+        raise ValueError(
+            "El proyecto necesita al menos un prompt, un agente ElevenLabs o un flujo n8n."
+        )
+
+    progress = progress_cb or _progress_noop
+    previo_env = _setear_env_temporal(
+        openai_key=openai_key,
+        elevenlabs_key=elevenlabs_key,
+        n8n_api_key=n8n_api_key,
+        n8n_base_url=n8n_base_url,
+    )
+    try:
+        from juez.colmena.colmena import Componente, run_colmena
+        from juez.colmena.mejoras import consolidar_proyecto
+
+        # â”€â”€ 1) Componentes para La Colmena â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        progress("Preparando componentes del proyecto", 5)
+        componentes: List[Any] = []
+        if prompt:
+            componentes.append(Componente(kind="prompt", nombre=nombre or "agente", prompt=prompt))
+        for flow in n8n_flows:
+            try:
+                wf, _webhook, wf_nombre = _resolve_n8n_flow(flow, n8n_api_key, n8n_base_url)
+                componentes.append(Componente(kind="n8n", nombre=wf_nombre, workflow_json=wf))
+            except Exception:
+                # Un flujo no resoluble no bloquea la evaluaciÃ³n; La Colmena
+                # simplemente no lo analiza. La conversaciÃ³n reportarÃ¡ su fallo.
+                pass
+
+        # â”€â”€ 2) La Colmena (construcciÃ³n) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        colmena = None
+        if componentes:
+            progress("Analizando la construcciÃ³n del proyecto", 25)
+            colmena = run_colmena(nombre or "proyecto", componentes, incluir_dinamicas=incluir_dinamicas)
+
+        # â”€â”€ 3) Conversaciones (opcional, caro) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        conversacion: Optional[Dict[str, Any]] = None
+        if incluir_conversaciones and (eleven_ids or n8n_flows):
+            progress("Probando el agente con conversaciones", 45)
+            try:
+                conversacion = run_pipeline(
+                    nombre=nombre,
+                    eleven_ids=eleven_ids,
+                    n8n_flows=n8n_flows,
+                    total_conversaciones=total_conversaciones,
+                    concurrencia=concurrencia,
+                    escenarios=escenarios,
+                    modo_ejecucion=modo_ejecucion,
+                    openai_key=openai_key,
+                    elevenlabs_key=elevenlabs_key,
+                    n8n_api_key=n8n_api_key,
+                    n8n_base_url=n8n_base_url,
+                    progress_cb=None,
+                )
+            except Exception as exc:
+                conversacion = {"error": str(exc)}
+
+        # â”€â”€ 4) Consolidar contrato firme (+ antes/despuÃ©s del prompt) â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        progress("Consolidando resultado y proponiendo mejoras", 90)
+        contrato = consolidar_proyecto(
+            nombre=nombre or "Proyecto",
+            prompt_actual=prompt,
+            colmena=colmena,
+            conversacion=conversacion,
+            openai_key=openai_key,
+        )
+        contrato["modo_ejecucion"] = modo_ejecucion if incluir_conversaciones else "sin_conversaciones"
+        progress("Listo", 100)
+        return contrato
     finally:
         _restaurar_env(previo_env)

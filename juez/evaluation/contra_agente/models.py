@@ -109,6 +109,7 @@ class TurnResult(BaseModel):
     reason: str
     adaptive_branch_taken: Optional[str] = None
     message_fragments: Optional[List[str]] = None  # fragmentos si fue turno fragmentado
+    transport_debug: Optional[Dict[str, Any]] = None
 
     model_config = {"extra": "forbid"}
 

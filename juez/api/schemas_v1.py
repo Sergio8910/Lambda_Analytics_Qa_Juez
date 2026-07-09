@@ -32,6 +32,53 @@ class N8nFlowSource(BaseModel):
     )
 
 
+class EvaluationPlanRequest(BaseModel):
+    """Request para previsualizar QUÉ se le va a evaluar a un agente.
+
+    Solo necesita el prompt del agente. Es 100% de solo-lectura: NO ejecuta al
+    agente ni corre la evaluación. Devuelve el perfil detectado, las reglas
+    (métricas + umbrales) que se aplicarían y los datos (casos sintéticos).
+    """
+
+    prompt_base: str = Field(..., min_length=1, description="System prompt del agente a evaluar")
+    metrics: Optional[List[str]] = Field(
+        None,
+        description="Nombres de métricas a aplicar. Si se omite, se listan TODAS las disponibles del catálogo.",
+    )
+    n_cases: int = Field(default=10, ge=1, le=50, description="Cuántos casos sintéticos generar para la vista previa")
+    seed: Optional[int] = Field(None, description="Semilla para reproducir los mismos casos")
+    incluir_casos: bool = Field(True, description="Si False, devuelve solo perfil y reglas (sin generar datos)")
+
+    model_config = {"extra": "forbid"}
+
+
+class EvaluationPlanResponse(BaseModel):
+    """Lo que se le va a evaluar a un agente: perfil + reglas + datos."""
+
+    perfil_agente: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Lo que el Juez detectó del agente (idioma, dominio, formato esperado, rigor).",
+    )
+    reglas: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Métricas/criterios que se aplicarían, con tipo, umbral y requisitos.",
+    )
+    datos: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Casos de prueba sintéticos que se usarían para evaluar (vacío si incluir_casos=False).",
+    )
+    resumen: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Conteos: nº de reglas, nº de casos, distribución por tag.",
+    )
+    nota_metodo: str = (
+        "Vista previa de solo-lectura: NO se ejecuta al agente ni se corre la "
+        "evaluación. Muestra qué reglas y qué datos se usarían si lanzas /api/v1/evaluate."
+    )
+
+    model_config = {"extra": "forbid"}
+
+
 class EvalElevenLabsRequest(BaseModel):
     """Request para evaluar un agente de ElevenLabs.
 
@@ -82,6 +129,10 @@ class EvalN8nRequest(BaseModel):
     total_conversaciones: int = Field(20, ge=0, le=100)
     concurrencia: int = Field(3, ge=1, le=20)
     escenarios: List[str] = Field(default_factory=list)
+    modo_ejecucion: Literal["sandbox", "real"] = Field(
+        "sandbox",
+        description="sandbox = pruebas sin side effects; real = dispara n8n/ElevenLabs reales.",
+    )
     openai_key: Optional[str] = None
     n8n_api_key: Optional[str] = Field(None, description="Override de N8N_API_KEY")
     n8n_base_url: Optional[str] = Field(None, description="Override de N8N_BASE_URL (para descargas por ID)")
@@ -99,10 +150,54 @@ class EvalPipelineRequest(BaseModel):
     total_conversaciones: int = Field(20, ge=0, le=100)
     concurrencia: int = Field(3, ge=1, le=20)
     escenarios: List[str] = Field(default_factory=list)
+    modo_ejecucion: Literal["sandbox", "real"] = Field(
+        "sandbox",
+        description="sandbox = pruebas sin side effects; real = dispara n8n/ElevenLabs reales.",
+    )
     openai_key: Optional[str] = None
     elevenlabs_key: Optional[str] = None
     n8n_api_key: Optional[str] = None
     n8n_base_url: Optional[str] = None
+
+
+class EvalProyectoRequest(BaseModel):
+    """Request de la evaluación UNIFICADA de un proyecto (contrato firme).
+
+    Combina La Colmena (análisis de construcción sobre `prompt` + `n8n_flows`) y
+    las conversaciones (`run_pipeline` sobre `eleven_ids` + `n8n_flows`). Devuelve
+    un job cuyo `result` sigue el contrato de `consolidar_proyecto`:
+    `score`, `estado`, `problemas[]`, `mejoras[]` (con antes/después real del prompt).
+
+    `prompt` es lo que habilita la mejora aplicable del prompt: pásalo con el
+    system prompt actual del agente para recibir un `antes`/`despues` concreto.
+    """
+
+    nombre: str = Field("Proyecto", description="Nombre del proyecto para el reporte")
+    prompt: str = Field(
+        "",
+        description="System prompt actual del agente. Habilita la mejora aplicable (antes/después).",
+    )
+    eleven_ids: List[str] = Field(default_factory=list, description="IDs de agentes ElevenLabs (voz)")
+    n8n_flows: List[N8nFlowSource] = Field(default_factory=list, description="Flujos n8n del proyecto")
+    total_conversaciones: int = Field(10, ge=0, le=100)
+    concurrencia: int = Field(3, ge=1, le=20)
+    escenarios: List[str] = Field(default_factory=list)
+    incluir_conversaciones: bool = Field(
+        True,
+        description="Si False, solo corre La Colmena (rápido y barato, sin simular conversaciones).",
+    )
+    incluir_dinamicas: bool = Field(
+        False,
+        description="Obreras dinámicas de La Colmena (adversarial/edge/performance). Cuestan tokens.",
+    )
+    openai_key: Optional[str] = None
+    elevenlabs_key: Optional[str] = None
+    n8n_api_key: Optional[str] = None
+    n8n_base_url: Optional[str] = None
+    modo_ejecucion: Literal["sandbox", "real"] = Field(
+        "sandbox",
+        description="sandbox = pruebas sin side effects; real = dispara n8n/ElevenLabs reales.",
+    )
 
 
 # =============================================================================
@@ -111,7 +206,7 @@ class EvalPipelineRequest(BaseModel):
 
 
 JobStatus = Literal["queued", "running", "completed", "failed"]
-JobKind = Literal["elevenlabs", "n8n", "pipeline", "failure"]
+JobKind = Literal["elevenlabs", "n8n", "pipeline", "proyecto", "failure"]
 
 
 class JobCreatedResponse(BaseModel):

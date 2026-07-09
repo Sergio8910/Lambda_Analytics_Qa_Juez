@@ -53,11 +53,17 @@ def _run_single_conversation(
     """Ejecuta una conversación individual. Thread-safe."""
     try:
         tool_runner: Optional[MockToolRunner] = None
-        if plan.artifact_expectation is not None:
+        force_mock_adapter = bool((synthetic_context or {}).get("force_mock_adapter"))
+        if force_mock_adapter or plan.artifact_expectation is not None:
             if not openai_key:
-                raise RuntimeError("Modo e2e requiere OPENAI_API_KEY para MockAgent.")
+                raise RuntimeError("Modo sandbox/e2e requiere OPENAI_API_KEY para MockAgent.")
             synthetic_context = synthetic_context or {}
-            tool_runner = MockToolRunner(plan.artifact_expectation.canonical_data)
+            if plan.artifact_expectation is not None:
+                canonical_data = plan.artifact_expectation.canonical_data
+            else:
+                from .synthetic.snapshot_factory import make_synthetic_data
+                _, canonical_data = make_synthetic_data(plan.plan_id, 1)
+            tool_runner = MockToolRunner(canonical_data)
             agent = MockAgent(
                 system_prompt=str(synthetic_context.get("system_prompt") or ""),
                 herramientas=list(synthetic_context.get("herramientas") or []),
