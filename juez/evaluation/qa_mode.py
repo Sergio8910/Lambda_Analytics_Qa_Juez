@@ -52,10 +52,16 @@ def clasificar_seccion(tipo: str, descripcion: str = "") -> str:
 
 def agrupar_por_seccion(problemas: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     """Agrupa TODOS los problemas en 3 secciones sin descartar ninguno --
-    a diferencia de filtrar_problemas(), que si descarta segun el modo."""
+    a diferencia de filtrar_problemas(), que si descarta segun el modo.
+
+    Acepta tanto el shape de evaluar_n8n.py ({"tipo": ...}) como el de
+    juez/colmena/mejoras.py ({"titulo": ...}) -- distintos sistemas, mismo
+    concepto de "etiqueta corta del problema".
+    """
     secciones: Dict[str, List[Dict[str, Any]]] = {s: [] for s in SECCIONES}
     for p in problemas:
-        clave = clasificar_seccion(p.get("tipo", ""), p.get("descripcion", ""))
+        etiqueta = p.get("tipo") or p.get("titulo", "")
+        clave = clasificar_seccion(etiqueta, p.get("descripcion", ""))
         secciones[clave].append(p)
     return secciones
 

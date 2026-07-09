@@ -13,6 +13,10 @@ UN solo JSON estable que el consumidor (Gamma) puede leer sin adivinar llaves:
       "problemas": [ {titulo, severidad, descripcion, ubicacion, recomendacion, origen} ],
       "mejoras":   [ {id, titulo, explicacion, severidad, objetivo, antes, despues,
                       aplicable, requiere_revision_manual} ],
+      "informe_no_tecnico": "...",  # las mismas `problemas` organizadas en 3
+                                     # secciones (seguridad/funcional/tecnico)
+                                     # en lenguaje simple para un lector no
+                                     # tecnico -- ver juez/evaluation/reporting/legible.py
       "detalle": {"colmena": {...}, "conversaciones": {...}}   # trazabilidad
     }
 
@@ -306,6 +310,22 @@ def consolidar_proyecto(*, nombre: str, prompt_actual: str = "",
         "score_conversacion": conv_score,
     }
 
+    # Informe no tecnico (3 secciones): presentacion ADICIONAL sobre datos ya
+    # calculados arriba -- si falla por lo que sea, nunca debe tumbar el
+    # contrato (que ya tiene su score y sus problemas listos).
+    informe_no_tecnico = ""
+    try:
+        from juez.evaluation.reporting.legible import render_informe_no_tecnico
+        informe_no_tecnico = render_informe_no_tecnico(
+            titulo=f"Evaluación del proyecto: {nombre or 'Proyecto'}",
+            veredicto=estado,
+            score=score,
+            problemas=problemas,
+            que_se_evaluo="Seguridad, funcionamiento y construcción técnica del proyecto.",
+        )
+    except Exception:
+        informe_no_tecnico = ""
+
     return {
         "kind": "proyecto",
         "nombre": nombre or "Proyecto",
@@ -313,6 +333,7 @@ def consolidar_proyecto(*, nombre: str, prompt_actual: str = "",
         "estado": estado,
         "resumen_severidad": resumen,
         "problemas": problemas,
+        "informe_no_tecnico": informe_no_tecnico,
         "mejoras": mejoras,
         "detalle": detalle,
     }

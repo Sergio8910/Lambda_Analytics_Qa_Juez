@@ -59,6 +59,8 @@ _VEREDICTO_LEGIBLE = {
     "deficiente": "Necesita mejoras", "critico": "Crítico — requiere atención",
     "cumple": "Cumple", "cumple_parcial": "Cumple a medias", "no_cumple": "No cumple",
     "ok": "Bien", "warning": "Con advertencias", "fail": "Con problemas",
+    # Vocabulario de juez/colmena/mejoras.py (consolidar_proyecto).
+    "listo": "Listo", "necesita_ajustes": "Necesita ajustes", "necesita_atencion": "Necesita atención urgente",
 }
 
 
@@ -148,7 +150,7 @@ def render_informe_no_tecnico(
             sev = _SEVERIDAD_LEGIBLE.get(sev_cruda, p.get("severidad", p.get("severity", "")))
             desc = p.get("descripcion") or p.get("message") or p.get("title") or ""
             L.append(f"  [{sev}] {desc}")
-            donde = p.get("nodo") or p.get("file")
+            donde = p.get("nodo") or p.get("file") or p.get("ubicacion")
             if donde:
                 L.append(f"      Donde: {donde}")
 
