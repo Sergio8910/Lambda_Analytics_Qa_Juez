@@ -133,6 +133,7 @@ def _categoria_label(cat: str) -> str:
     return {
         "happy_path": "Flujo normal",
         "herramienta": "Uso de herramientas",
+        "recorrido_completo": "Cobertura total de herramientas",
         "multi_turno": "Memoria multi-turno",
         "limite": "Limites de dominio",
         "caos": "Robustez ante caos",

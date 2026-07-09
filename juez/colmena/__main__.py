@@ -21,7 +21,7 @@ from .approval_report import (
 )
 from .approval_validator import validate_approval_file
 from .auto_fix_agent import render_auto_fix_agent_report
-from .colmena import Componente, render_colmena_report
+from .colmena import parse_legacy_project_file, render_colmena_report
 from .iteration_loop import run_project_repair_loop
 from .models import RepairLoopConfig
 from .patch_applier import apply_approved_patches
@@ -228,7 +228,15 @@ def main() -> None:
         return
 
     data = json.loads(project_path.read_text(encoding="utf-8-sig"))
-    componentes = [Componente(**c) for c in data.get("componentes", [])]
+    componentes = parse_legacy_project_file(data, project_path.stem)
+    if not componentes and "componentes" not in data:
+        raise SystemExit(
+            f"No se detectaron componentes evaluables en {project_path}. "
+            "Este archivo no tiene 'componentes' (formato legacy) ni 'nodes'+'connections' "
+            "(export de flujo n8n). Nada se evaluo -- no interpretes la ausencia de "
+            "hallazgos como un proyecto perfecto. Usa una carpeta de proyecto con --project "
+            "para el escaneo completo, o revisa el formato del archivo."
+        )
     reina = ReinaColmena(
         data.get("project_id", "proyecto"),
         componentes,

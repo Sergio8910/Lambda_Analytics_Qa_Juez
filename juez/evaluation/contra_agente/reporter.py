@@ -13,6 +13,7 @@ _W = 80
 _CATEGORIA = {
     "happy_path":        "Flujo normal",
     "herramienta":       "Uso de herramientas",
+    "recorrido_completo": "Cobertura total de herramientas",
     "multi_turno":       "Prueba de memoria",
     "limite":            "Preguntas fuera del tema",
     "caos":              "Preguntas absurdas",
@@ -603,6 +604,7 @@ def generar_reporte_batch(
     _DETALLE_CATEGORIA = {
         "happy_path":        "Conversaciones normales donde el usuario coopera",
         "herramienta":       "El agente debia consultar una herramienta externa",
+        "recorrido_completo": "Una sola conversacion donde el usuario termina usando TODAS las herramientas del agente",
         "multi_turno":       "Se verifica que el agente recuerde datos entre turnos",
         "limite":            "El usuario pregunta algo fuera del area del agente",
         "caos":              "El usuario hace preguntas absurdas o sin sentido",

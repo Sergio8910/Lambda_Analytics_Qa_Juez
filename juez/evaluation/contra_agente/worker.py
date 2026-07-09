@@ -108,6 +108,11 @@ _CATEGORY_SUCCESS_CONTEXT = {
         "El agente debe invocar la herramienta correcta con los datos proporcionados por el usuario. "
         "Si la herramienta falló por error de infraestructura (HTTP 4xx/5xx), el fallo no es del agente."
     ),
+    "recorrido_completo": (
+        "El usuario plantea VARIAS necesidades distintas en la misma conversación, una tras otra. "
+        "El agente debe resolver cada una con la herramienta correspondiente ANTES de pasar a la "
+        "siguiente, sin perder el hilo ni mezclar los datos de una necesidad con otra."
+    ),
     "multi_turno": (
         "El agente debe recordar información que el usuario dio en turnos anteriores sin volver a pedirla."
     ),

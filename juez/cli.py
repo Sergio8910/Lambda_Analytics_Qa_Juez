@@ -12,12 +12,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from juez.colmena import (
-    Componente,
     ReinaColmena,
     apply_approved_patches,
     build_approval_manifest,
     build_patch_approval_report,
     export_patch_plan_items,
+    parse_legacy_project_file,
     render_auto_fix_agent_report,
     render_colmena_report,
     render_patch_apply_report,
@@ -253,7 +253,15 @@ def _run_colmena(args: argparse.Namespace) -> None:
         return
 
     data = json.loads(project_path.read_text(encoding="utf-8-sig"))
-    componentes = [Componente(**c) for c in data.get("componentes", [])]
+    componentes = parse_legacy_project_file(data, project_path.stem)
+    if not componentes and "componentes" not in data:
+        raise SystemExit(
+            f"No se detectaron componentes evaluables en {project_path}. "
+            "Este archivo no tiene 'componentes' (formato legacy) ni 'nodes'+'connections' "
+            "(export de flujo n8n). Nada se evaluo -- no interpretes la ausencia de "
+            "hallazgos como un proyecto perfecto. Usa una carpeta de proyecto con --project "
+            "para el escaneo completo, o revisa el formato del archivo."
+        )
     reina = ReinaColmena(
         data.get("project_id", "proyecto"),
         componentes,

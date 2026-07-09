@@ -33,6 +33,28 @@ class Componente(BaseModel):
     model_config = {"extra": "allow"}
 
 
+def parse_legacy_project_file(data: dict[str, Any], fallback_name: str) -> list[Componente]:
+    """Interpreta un archivo `--project algo.json` (modo legacy, no carpeta).
+
+    Soporta DOS formatos, sin romper el existente:
+      - Wrapper legacy explicito: {"componentes": [{...Componente...}, ...]}.
+      - Export CRUDO de un flujo n8n: {"nodes": [...], "connections": {...}, ...}.
+        Antes de este fix, pasar un export real de n8n aqui devolvia SIEMPRE
+        `componentes=[]` en silencio (data.get("componentes", []) -> vacio),
+        lo que hacia que la evaluacion terminara en 0 componentes, 0 hallazgos
+        y un score de 100/100 -- un falso "todo bien" sin haber revisado nada.
+
+    Si no calza ninguno de los dos formatos, devuelve [] y el llamador decide
+    como reportarlo (no debe interpretarse como "proyecto perfecto").
+    """
+    crudos = data.get("componentes")
+    if isinstance(crudos, list) and crudos:
+        return [Componente(**c) for c in crudos]
+    if "nodes" in data and "connections" in data:
+        return [Componente(kind="n8n", nombre=data.get("name") or fallback_name, workflow_json=data)]
+    return []
+
+
 class ColmenaResult(BaseModel):
     project_id: str
     score: float

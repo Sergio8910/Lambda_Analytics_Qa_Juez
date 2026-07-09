@@ -51,6 +51,20 @@ TODAS las conversaciones, incluyendo las adversariales.
   colombianos concretos: "Calle 45 # 32-18", "Medellín", "Bogotá", "ref 77421", etc.
   Cada conversación de herramienta debe tener datos distintos (ciudad distinta, dirección distinta).
 
+- recorrido_completo: Una SOLA conversación extendida (natural, no una lista de
+  pruebas aisladas) donde el usuario, a lo largo de la charla, termina necesitando
+  y usando TODAS las herramientas/tools disponibles del agente, una tras otra,
+  como pasaría en una sesión real con un cliente que tiene varias necesidades.
+  Turnos: por cada tool, un turno donde el usuario plantea la necesidad ligada a
+  esa tool y un turno donde da los datos requeridos — encadenados en orden natural
+  (ej. "primero quiero consultar X... listo, ahora también necesito Y..."),
+  terminando con un turno de cierre que confirma que TODO quedó resuelto.
+  success_criteria de cada turno de datos: "el agente invoca la tool
+  correspondiente con los datos dados y entrega un resultado concreto antes de
+  seguir con la siguiente necesidad". metrics: incluir "tool_invocation" en cada
+  turno que prueba una tool. Si el agente tiene 2+ tools, ESTA categoría debe
+  cubrir TODAS, no un subconjunto — es la prueba de cobertura total del agente.
+
 - multi_turno: 4-6 turnos. Prueba context_memory: dar un dato en turno 2 y verificar
   en turno 4 que el agente lo recuerda sin pedirlo de nuevo.
   OBLIGATORIO: varía el dato que se prueba y el método de verificación entre conversaciones.
@@ -132,8 +146,9 @@ def _distribuir(total: int, categorias_custom: Optional[List[str]] = None) -> Di
         return dist
 
     pesos = {
-        "happy_path":        0.25,
-        "herramienta":       0.20,
+        "happy_path":        0.20,
+        "herramienta":       0.15,
+        "recorrido_completo": 0.10,
         "multi_turno":       0.15,
         "limite":            0.10,
         "caos":              0.10,
@@ -154,6 +169,13 @@ def _distribuir(total: int, categorias_custom: Optional[List[str]] = None) -> Di
         deficit = 2 - dist["herramienta"]
         dist["herramienta"] = 2
         # Compensar reduciendo happy_path (categoría de mayor peso)
+        donor = "happy_path" if "happy_path" in dist else max(dist, key=lambda c: pesos.get(c, 0))
+        dist[donor] = max(1, dist[donor] - deficit)
+    # Garantizar mínimo 2 en recorrido_completo (varias conversaciones de cobertura
+    # total, no solo una) cuando el total lo permite.
+    if total >= 8 and "recorrido_completo" in dist and dist["recorrido_completo"] < 2:
+        deficit = 2 - dist["recorrido_completo"]
+        dist["recorrido_completo"] = 2
         donor = "happy_path" if "happy_path" in dist else max(dist, key=lambda c: pesos.get(c, 0))
         dist[donor] = max(1, dist[donor] - deficit)
     # Ajustar para que sume exactamente total
@@ -756,6 +778,65 @@ def _build_herramienta_variantes(analisis: Dict) -> List[List[tuple]]:
     return variantes
 
 
+def _build_recorrido_completo_variantes(analisis: Dict) -> List[List[tuple]]:
+    """Construye UNA conversación extendida que encadena TODAS las tools del
+    agente, una tras otra, como pasaría en una sesión real con un cliente que
+    tiene varias necesidades. A diferencia de `_build_herramienta_variantes`
+    (una tool por conversación), esta es la prueba de cobertura total.
+    """
+    webhook_tools = [t for t in analisis.get("tools", []) if t.get("tipo", "").lower() == "webhook"]
+    if len(webhook_tools) < 2:
+        # Sin 2+ tools no hay nada que "encadenar" -- cae al mismo patrón que
+        # herramienta (sigue siendo una conversación valida, solo que no es
+        # una prueba de cobertura multi-tool).
+        return _build_herramienta_variantes(analisis)
+
+    def _construir_encadenado(orden: List[Dict]) -> List[tuple]:
+        turns: List[tuple] = []
+        for t_idx, tool in enumerate(orden):
+            tool_nombre = tool.get("nombre", "la herramienta")
+            tool_desc = tool.get("descripcion", "hacer una consulta en el sistema")
+            campos = tool.get("campos_requeridos", [])
+            es_primera = t_idx == 0
+            if es_primera:
+                opener_msg = f"Hola, buenas, necesito ayuda con algo relacionado con {tool_desc.lower().rstrip('.')}."
+            else:
+                opener_msg = f"Ah, también necesito otra cosa: algo relacionado con {tool_desc.lower().rstrip('.')}."
+            opener_criteria = (
+                f"El agente entiende la nueva necesidad y solicita los datos requeridos "
+                f"por la herramienta {tool_nombre} sin perder el hilo de la conversación"
+            )
+            turns.append((opener_msg, "opener" if es_primera else "probe", opener_criteria))
+
+            if campos:
+                partes_datos = [f"{campo}: {_valor_para_campo(campo, t_idx + c_idx)}" for c_idx, campo in enumerate(campos[:2])]
+                probe_msg = f"Claro, te doy los datos: {', '.join(partes_datos)}"
+            else:
+                persona = _HERRAMIENTA_PERSONAS[t_idx % len(_HERRAMIENTA_PERSONAS)]
+                probe_msg = f"Claro, te doy los datos: ciudad {persona[1]}, dirección {persona[2]}"
+            probe_criteria = (
+                f"El agente invoca {tool_nombre} con los datos dados y entrega un resultado "
+                f"concreto ANTES de seguir con la siguiente necesidad"
+            )
+            turns.append((probe_msg, "probe", probe_criteria))
+
+        turns.append((
+            "Perfecto, eso era todo lo que necesitaba, muchas gracias por la ayuda.",
+            "closing",
+            "El agente confirma que TODAS las necesidades planteadas quedaron resueltas y cierra cordialmente",
+        ))
+        return turns
+
+    # Dos variantes con orden distinto de tools (cobertura + diversidad, en vez
+    # de repetir siempre la misma secuencia).
+    variantes = [_construir_encadenado(webhook_tools)]
+    if len(webhook_tools) >= 2:
+        invertido = list(reversed(webhook_tools))
+        if invertido != webhook_tools:
+            variantes.append(_construir_encadenado(invertido))
+    return variantes
+
+
 def _generar_planes_heuristicos(
     analisis: Dict,
     agent_name: str,
@@ -972,11 +1053,13 @@ def _generar_planes_heuristicos(
 
     # ── herramienta: construida dinámicamente desde analisis.tools ─────────────
     _PLANTILLAS["herramienta"] = _build_herramienta_variantes(analisis)
+    _PLANTILLAS["recorrido_completo"] = _build_recorrido_completo_variantes(analisis)
 
     _MOODS = {
         "happy_path": "cordial", "limite": "curioso", "caos": "curioso",
         "agresivo": "agresivo", "seguridad": "confuso", "herramienta": "impaciente",
         "multi_turno": "cordial", "contexto_multiple": "confuso",
+        "recorrido_completo": "cordial",
     }
 
     _METRICS = {
@@ -988,6 +1071,7 @@ def _generar_planes_heuristicos(
         "herramienta": ["task_success", "tool_invocation"],
         "multi_turno": ["task_success", "context_memory"],
         "contexto_multiple": ["task_success"],
+        "recorrido_completo": ["task_success", "tool_invocation"],
     }
 
     for category, count in distribucion.items():

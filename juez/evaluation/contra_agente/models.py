@@ -69,7 +69,7 @@ class ConversationPlan(BaseModel):
     """Plan completo de una conversación. El contra-agente lo ejecuta turno a turno."""
     plan_id: str
     category: Literal[
-        "happy_path", "herramienta", "limite", "caos",
+        "happy_path", "herramienta", "recorrido_completo", "limite", "caos",
         "agresivo", "seguridad", "contexto_multiple", "multi_turno"
     ]
     severity: Literal["alta", "media", "baja"] = "media"

@@ -17,7 +17,7 @@ from .approval_report import (
 )
 from .approval_validator import validate_approval_file
 from .auto_fix_agent import AutoFixAgentResult, render_auto_fix_agent_report, run_auto_fix_agent
-from .colmena import ColmenaResult, Componente, render_colmena_report, run_colmena
+from .colmena import ColmenaResult, Componente, parse_legacy_project_file, render_colmena_report, run_colmena
 from .iteration_loop import run_project_repair_loop
 from .models import NormalizedFinding, ProjectEvaluationReport, ProjectInventory
 from .patch_applier import apply_approved_patches
@@ -41,6 +41,7 @@ __all__ = [
     "PatchPlanItem",
     "ReinaColmena",
     "apply_approved_patches",
+    "parse_legacy_project_file",
     "build_approval_manifest",
     "build_patch_approval_report",
     "evaluate_project_path",
