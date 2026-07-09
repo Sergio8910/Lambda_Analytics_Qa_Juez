@@ -734,22 +734,29 @@ def run_n8n_single(
         if artef and not artef.get("error"):
             scores.setdefault("por_categoria", {})["artefacto"] = artef.get("score_artefacto", 0.0)
 
-        score_general = scores.get("score_general", 0.0)
-        if score_general >= 70:
-            veredicto_no_tecnico = "cumple"
-        elif score_general >= 50:
-            veredicto_no_tecnico = "cumple_parcial"
-        else:
-            veredicto_no_tecnico = "no_cumple"
+        # Informe no tecnico: es una presentacion ADICIONAL sobre datos ya
+        # calculados arriba -- si falla por lo que sea, NUNCA debe tumbar la
+        # evaluacion completa (que ya tiene su score y sus problemas listos).
+        informe_no_tecnico = ""
+        try:
+            score_general = scores.get("score_general", 0.0)
+            if score_general >= 70:
+                veredicto_no_tecnico = "cumple"
+            elif score_general >= 50:
+                veredicto_no_tecnico = "cumple_parcial"
+            else:
+                veredicto_no_tecnico = "no_cumple"
 
-        from juez.evaluation.reporting.legible import render_informe_no_tecnico
-        informe_no_tecnico = render_informe_no_tecnico(
-            titulo=f"Evaluación del flujo: {nombre}",
-            veredicto=veredicto_no_tecnico,
-            score=score_general,
-            problemas=todos_los_problemas,
-            que_se_evaluo="Seguridad, funcionamiento y construcción técnica del flujo n8n.",
-        )
+            from juez.evaluation.reporting.legible import render_informe_no_tecnico
+            informe_no_tecnico = render_informe_no_tecnico(
+                titulo=f"Evaluación del flujo: {nombre}",
+                veredicto=veredicto_no_tecnico,
+                score=score_general,
+                problemas=todos_los_problemas,
+                que_se_evaluo="Seguridad, funcionamiento y construcción técnica del flujo n8n.",
+            )
+        except Exception:
+            informe_no_tecnico = ""
 
         progress("Generando reporte", 95)
         archivo_origen = flow.get("url") or flow.get("workflow_id") or "(JSON inline via API)"
