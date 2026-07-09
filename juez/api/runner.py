@@ -719,6 +719,11 @@ def run_n8n_single(
             except Exception as exc:
                 artef = {"error": str(exc)}
 
+        # Copia SIN filtrar -- el informe no tecnico siempre muestra las 3
+        # secciones completas (seguridad/funcional/tecnico), independiente
+        # de modo_qa (que solo afecta el score y el reporte tecnico clasico).
+        todos_los_problemas = list(analisis.get("problemas", []))
+
         # Modo QA: filtra los hallazgos a técnico / funcional antes de puntuar.
         if modo_qa and modo_qa != "ambos":
             from juez.evaluation.qa_mode import filtrar_problemas
@@ -728,6 +733,23 @@ def run_n8n_single(
         scores = mod.calcular_score_n8n(analisis, batch_result)
         if artef and not artef.get("error"):
             scores.setdefault("por_categoria", {})["artefacto"] = artef.get("score_artefacto", 0.0)
+
+        score_general = scores.get("score_general", 0.0)
+        if score_general >= 70:
+            veredicto_no_tecnico = "cumple"
+        elif score_general >= 50:
+            veredicto_no_tecnico = "cumple_parcial"
+        else:
+            veredicto_no_tecnico = "no_cumple"
+
+        from juez.evaluation.reporting.legible import render_informe_no_tecnico
+        informe_no_tecnico = render_informe_no_tecnico(
+            titulo=f"Evaluación del flujo: {nombre}",
+            veredicto=veredicto_no_tecnico,
+            score=score_general,
+            problemas=todos_los_problemas,
+            que_se_evaluo="Seguridad, funcionamiento y construcción técnica del flujo n8n.",
+        )
 
         progress("Generando reporte", 95)
         archivo_origen = flow.get("url") or flow.get("workflow_id") or "(JSON inline via API)"
@@ -747,6 +769,7 @@ def run_n8n_single(
             "score_general": scores.get("score_general", 0.0),
             "scores": _strip_non_serializable(scores),
             "problemas": _strip_non_serializable(analisis.get("problemas", [])),
+            "informe_no_tecnico": informe_no_tecnico,
             "trigger": _strip_non_serializable(analisis.get("trigger", {})),
             "dynamic_tests_ran": batch_result is not None,
             "batch_summary": (
