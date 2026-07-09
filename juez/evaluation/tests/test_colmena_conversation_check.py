@@ -9,9 +9,24 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from juez.colmena import conversation_check as cc
 from juez.colmena.project_evaluator import _load_declared_webhooks, evaluate_project_path
 from juez.evaluation.contra_agente.models import BatchResult, ConversationResult, TurnResult
+
+# Referencia a la implementacion REAL (no mockeada) antes de que el fixture
+# autouse de abajo la reemplace en cada test.
+_HABILITADO_EN_SERVIDOR_REAL = cc._habilitado_en_servidor
+
+
+@pytest.fixture(autouse=True)
+def _habilitado_en_servidor_por_defecto_en_tests(monkeypatch):
+    """La mayoria de estos tests validan la LOGICA de verificar_conversaciones_reales
+    una vez que el servidor ya habilito la funcion explicitamente. La salvaguarda
+    en si (variable de entorno NO puesta) se prueba aparte, mas abajo, desactivando
+    este fixture explicitamente."""
+    monkeypatch.setattr(cc, "_habilitado_en_servidor", lambda: True)
 
 _FLUJO = {
     "name": "notifica-cliente",
@@ -188,3 +203,51 @@ def test_evaluate_project_path_dispara_con_ambos_flags_y_manifiesto(monkeypatch)
             json.dumps({"notifica-cliente": "https://mi-n8n.com/webhook/abc"}), encoding="utf-8",
         )
         evaluate_project_path(root, incluir_dinamicas=True, enable_real_conversations=True)
+
+
+# ── Salvaguarda de servidor (COLMENA_ALLOW_REAL_CONVERSATIONS) ───────────────
+# Estos tests desactivan el fixture autouse de arriba a proposito, para
+# probar el comportamiento REAL por defecto (sin la variable de entorno).
+
+def test_sin_variable_de_entorno_no_dispara_nada_pase_lo_que_pase(monkeypatch):
+    """Aunque el caller (Gamma, cualquier API, etc.) pida esto explicitamente
+    con un webhook real y todo disponible, sin COLMENA_ALLOW_REAL_CONVERSATIONS
+    puesta en el servidor, la funcion NUNCA dispara nada real."""
+    monkeypatch.setattr(cc, "_habilitado_en_servidor", _HABILITADO_EN_SERVIDOR_REAL)
+    monkeypatch.delenv(cc._ENV_VAR_HABILITAR, raising=False)
+    monkeypatch.setattr(cc, "_llm_disponible", lambda: True)  # incluso con LLM disponible
+
+    llamadas_reales = {"si": False}
+
+    def _no_deberia_llamarse(*a, **kw):
+        llamadas_reales["si"] = True
+        raise AssertionError("no deberia haber intentado generar/ejecutar nada")
+
+    import juez.evaluation.contra_agente.generator as generator_mod
+    monkeypatch.setattr(generator_mod, "generar_batch", _no_deberia_llamarse)
+
+    hallazgos = cc.verificar_conversaciones_reales("flujo", _FLUJO, "https://ejemplo/webhook/x")
+
+    assert llamadas_reales["si"] is False
+    assert len(hallazgos) == 1
+    assert hallazgos[0].severity == "info"
+    assert cc._ENV_VAR_HABILITAR in hallazgos[0].description
+    assert "DESACTIVADAS" in hallazgos[0].title
+
+
+def test_variable_de_entorno_en_1_habilita_la_funcion(monkeypatch):
+    monkeypatch.setattr(cc, "_habilitado_en_servidor", _HABILITADO_EN_SERVIDOR_REAL)
+    monkeypatch.setenv(cc._ENV_VAR_HABILITAR, "1")
+    monkeypatch.setattr(cc, "_llm_disponible", lambda: False)  # para llegar rapido a un resultado deterministico
+    hallazgos = cc.verificar_conversaciones_reales("flujo", _FLUJO, "https://ejemplo/webhook/x")
+    # Paso la salvaguarda (no aparece el mensaje de "DESACTIVADAS"); cae en el
+    # siguiente gate (falta OPENAI_API_KEY), que es el comportamiento esperado.
+    assert "DESACTIVADAS" not in hallazgos[0].title
+    assert "OPENAI_API_KEY" in hallazgos[0].title
+
+
+def test_variable_de_entorno_con_valor_invalido_no_habilita(monkeypatch):
+    monkeypatch.setattr(cc, "_habilitado_en_servidor", _HABILITADO_EN_SERVIDOR_REAL)
+    monkeypatch.setenv(cc._ENV_VAR_HABILITAR, "false")
+    hallazgos = cc.verificar_conversaciones_reales("flujo", _FLUJO, "https://ejemplo/webhook/x")
+    assert "DESACTIVADAS" in hallazgos[0].title

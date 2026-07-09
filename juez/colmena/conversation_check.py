@@ -3,7 +3,8 @@
 A diferencia de TODO el resto de Colmena (100% estatico o LLM-en-seco), esta
 obrera SI dispara peticiones HTTP reales contra el webhook declarado -- si el
 flujo escribe en una BD, manda un correo o cobra un pago, eso ocurre DE
-VERDAD. Por eso es estrictamente opt-in y requiere DOS cosas explicitas:
+VERDAD. Por eso es estrictamente opt-in y requiere TRES cosas explicitas,
+NINGUNA de las cuales el caller puede activar por accidente o por defecto:
 
   1. El proyecto declara la URL del webhook en un manifiesto explicito
      (webhooks_n8n.json en la raiz), nombre_del_flujo -> URL. Sin manifiesto,
@@ -12,6 +13,14 @@ VERDAD. Por eso es estrictamente opt-in y requiere DOS cosas explicitas:
      de incluir_dinamicas, porque esto es categoricamente mas riesgoso que
      los chequeos LLM-en-seco existentes: tiene efectos reales en sistemas
      productivos).
+  3. La variable de entorno COLMENA_ALLOW_REAL_CONVERSATIONS='1' esta puesta
+     en el SERVIDOR que ejecuta la evaluacion. Esta es una salvaguarda
+     adicional e independiente de lo que cualquier caller (API, frontend,
+     integracion externa) pase como parametro -- si quien opera el servidor
+     no puso explicitamente esta variable, la funcion NUNCA dispara nada
+     real, sin importar que mas se le pida. Requerida despues de detectar
+     que un caller externo podia (sin que lo hayamos confirmado con
+     certeza) estar disparando esto contra un webhook de produccion real.
 
 Reusa integramente lo ya construido, sin duplicar logica:
   - N8nAnalyzer (juez/evaluar_n8n.py): analisis estatico del flujo (nodos_ia,
@@ -43,6 +52,11 @@ _SEVERIDAD_POR_CATEGORIA = {
     "multi_turno": "medium",
 }
 _DEFAULT_TOTAL_CONVERSACIONES = 6
+_ENV_VAR_HABILITAR = "COLMENA_ALLOW_REAL_CONVERSATIONS"
+
+
+def _habilitado_en_servidor() -> bool:
+    return os.getenv(_ENV_VAR_HABILITAR, "").strip().lower() in ("1", "true", "yes", "si")
 
 
 def _llm_disponible() -> bool:
@@ -71,6 +85,17 @@ def verificar_conversaciones_reales(
     builder = FindingBuilder()
     if not webhook_url:
         return []
+    if not _habilitado_en_servidor():
+        return [builder.make(
+            severity="info", category="workflow", source="conversation_check",
+            title=f"[{nombre_flujo}] conversaciones reales DESACTIVADAS por seguridad en este servidor",
+            description=(
+                f"Falta la variable de entorno {_ENV_VAR_HABILITAR}=1 en el servidor que corre "
+                "esta evaluacion. Esta funcion dispara peticiones HTTP reales contra un webhook "
+                "de produccion -- no se activa solo porque el llamador lo pida."
+            ),
+            file=nombre_flujo,
+        )]
     if not _llm_disponible():
         return [builder.make(
             severity="info", category="workflow", source="conversation_check",
