@@ -40,6 +40,15 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="python -m juez.colmena")
     p.add_argument("--project", "--config", dest="project", required=True, help="JSON del proyecto o carpeta")
     p.add_argument("--incluir-dinamicas", action="store_true", help="Corre obreras dinamicas")
+    p.add_argument(
+        "--enable-real-conversations",
+        action="store_true",
+        help=(
+            "PELIGRO: dispara conversaciones reales (HTTP real) contra el webhook de "
+            "cada flujo n8n declarado en webhooks_n8n.json. Requiere --incluir-dinamicas. "
+            "Efectos reales (email, BD, pagos) pueden ocurrir de verdad."
+        ),
+    )
     p.add_argument("--auto-fix", action="store_true", help="Evalua, aplica fixes, re-evalua e itera")
     p.add_argument("--cases", type=int, default=10, help="Casos sinteticos para repair loop")
     p.add_argument("--max-iterations", type=int, default=5, help="Maximo de iteraciones de Auto-Fix")
@@ -213,7 +222,10 @@ def main() -> None:
         reina = ReinaColmena.from_project_path(
             project_path,
             incluir_dinamicas=args.incluir_dinamicas,
+            enable_real_conversations=args.enable_real_conversations,
         )
+        if args.enable_real_conversations and not args.incluir_dinamicas:
+            print("AVISO: --enable-real-conversations requiere --incluir-dinamicas; no se disparara nada real.")
         result = reina.evaluar()
         reporte = render_project_report(result)
         if args.auto_fix:

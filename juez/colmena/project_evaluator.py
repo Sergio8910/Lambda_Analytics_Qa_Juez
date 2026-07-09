@@ -29,11 +29,34 @@ _CATEGORY_WEIGHTS = {
 _SEVERITY_IMPACT = {"critical": 1.0, "high": 0.45, "medium": 0.18, "low": 0.06, "info": 0.0}
 
 
+_WEBHOOKS_FILENAMES = ("webhooks_n8n.json",)
+
+
+def _load_declared_webhooks(root: Path) -> dict[str, str]:
+    """Lee un manifiesto opcional que declara, por flujo n8n, la URL real de
+    su webhook -- {"<nombre o archivo del flujo>": "https://.../webhook/..."}.
+
+    Sin el archivo, comportamiento identico a hoy (cero llamadas reales).
+    """
+    for name in _WEBHOOKS_FILENAMES:
+        path = root / name
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items() if isinstance(v, str) and v.strip()}
+    return {}
+
+
 def evaluate_project_path(
     project_path: Path | str,
     *,
     project_id: str | None = None,
     incluir_dinamicas: bool = False,
+    enable_real_conversations: bool = False,
 ) -> ProjectEvaluationReport:
     root = Path(project_path).resolve()
     inventory = scan_project(root)
@@ -45,6 +68,25 @@ def evaluate_project_path(
     rule_findings, rules_report = business_rules_worker_findings(root, inventory)
     findings.extend(rule_findings)
     findings.extend(run_functional_verification(root, inventory, rules_report))
+
+    if incluir_dinamicas and enable_real_conversations:
+        webhooks = _load_declared_webhooks(root)
+        if webhooks:
+            from .conversation_check import verificar_conversaciones_reales
+
+            for asset in inventory.assets:
+                if asset.kind != "n8n_workflow":
+                    continue
+                path = root / asset.path
+                webhook_url = webhooks.get(asset.name or "") or webhooks.get(asset.path) or webhooks.get(path.name)
+                if not webhook_url:
+                    continue
+                try:
+                    workflow = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+                except Exception:
+                    continue
+                nombre = asset.name or path.stem
+                findings.extend(verificar_conversaciones_reales(nombre, workflow, webhook_url))
 
     legacy_score: float | None = None
     legacy_findings: list[dict[str, Any]] = []

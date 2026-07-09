@@ -17,11 +17,13 @@ class ReinaColmena:
         *,
         incluir_dinamicas: bool = True,
         project_path: Path | str | None = None,
+        enable_real_conversations: bool = False,
     ) -> None:
         self.project_id = project_id
         self.componentes = componentes or []
         self.incluir_dinamicas = incluir_dinamicas
         self.project_path = Path(project_path) if project_path else None
+        self.enable_real_conversations = enable_real_conversations
 
     @classmethod
     def from_project_path(
@@ -30,6 +32,7 @@ class ReinaColmena:
         *,
         project_id: str | None = None,
         incluir_dinamicas: bool = False,
+        enable_real_conversations: bool = False,
     ) -> ReinaColmena:
         path = Path(project_path)
         return cls(
@@ -37,6 +40,7 @@ class ReinaColmena:
             [],
             incluir_dinamicas=incluir_dinamicas,
             project_path=path,
+            enable_real_conversations=enable_real_conversations,
         )
 
     def evaluar(self) -> ColmenaResult | ProjectEvaluationReport:
@@ -46,6 +50,7 @@ class ReinaColmena:
                 self.project_path,
                 project_id=self.project_id,
                 incluir_dinamicas=self.incluir_dinamicas,
+                enable_real_conversations=self.enable_real_conversations,
             )
         return run_colmena(self.project_id, self.componentes, incluir_dinamicas=self.incluir_dinamicas)
 
