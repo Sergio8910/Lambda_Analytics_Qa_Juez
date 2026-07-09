@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from .models import (
@@ -263,10 +264,19 @@ def _build_generator_prompt(
     agent_name: str,
     distribucion: Dict[str, int],
     escenarios_extra: Optional[List[str]] = None,
+    openers_previos: Optional[List[str]] = None,
 ) -> str:
     system_prompt_text = analisis.get("prompt", {}).get("completo", "")[:3000]
     tools_text = _tools_summary(analisis)
     idioma = analisis.get("identidad", {}).get("idioma", "es")
+
+    openers_txt = ""
+    if openers_previos:
+        lista = "\n".join(f"  - {o}" for o in openers_previos[-60:])
+        openers_txt = (
+            f"\nOPENERS YA USADOS EN OTRAS TANDAS DE ESTE MISMO BATCH (NO los repitas "
+            f"ni generes algo muy similar en intencion o fraseo):\n{lista}\n"
+        )
 
     dist_lines = "\n".join(
         f"  - {cat}: {n} conversaciones" for cat, n in distribucion.items() if n > 0
@@ -336,7 +346,7 @@ SYSTEM PROMPT DEL AGENTE (primeros 3000 chars):
 
 TOOLS DISPONIBLES:
 {tools_text}
-{reglas_txt}
+{reglas_txt}{openers_txt}
 DISTRIBUCIÓN DE CONVERSACIONES A GENERAR:
 {dist_lines}
 
@@ -562,6 +572,117 @@ def _attach_e2e_expectations(
         marked += 1
 
 
+# Una sola llamada al LLM pidiendo TODAS las conversaciones no escala: a
+# partir de cierto volumen el JSON se trunca (limite de tokens de salida) y
+# todo cae en silencio al respaldo heuristico (un puñado de plantillas fijas
+# repetidas en ciclo) -- lo opuesto a "conversaciones ricas y variadas".
+# Por eso, pasado este umbral, se genera en VARIOS lotes -- varias llamadas
+# al LLM ("obreras") trabajando EN PARALELO por tanda -- en vez de una sola.
+_MAX_CONVERSACIONES_POR_LLAMADA = 20
+_LOTES_CONCURRENTES_POR_TANDA = 5
+
+
+def _dividir_distribucion_en_lotes(distribucion: Dict[str, int], tamano_lote: int) -> List[Dict[str, int]]:
+    """Parte una distribucion {categoria: n} en varias distribuciones mas
+    chicas (<= tamano_lote conversaciones cada una), sin perder ninguna."""
+    items: List[str] = []
+    for categoria, n in distribucion.items():
+        items.extend([categoria] * n)
+    lotes: List[Dict[str, int]] = []
+    for i in range(0, len(items), tamano_lote):
+        lote: Dict[str, int] = {}
+        for categoria in items[i:i + tamano_lote]:
+            lote[categoria] = lote.get(categoria, 0) + 1
+        lotes.append(lote)
+    return lotes
+
+
+def _generar_un_lote(
+    client: Any,
+    analisis: Dict[str, Any],
+    agent_name: str,
+    lote_distribucion: Dict[str, int],
+    escenarios_extra: Optional[List[str]],
+    openers_previos: List[str],
+    batch_id: str,
+    lote_idx: int,
+    agent_id: str,
+    adapter: str,
+) -> List[ConversationPlan]:
+    """Una 'obrera': genera UN lote via LLM, con respaldo heuristico si falla
+    o si el LLM devuelve menos de lo pedido para este lote."""
+    prompt = _build_generator_prompt(
+        analisis, agent_name, lote_distribucion, escenarios_extra, openers_previos=openers_previos,
+    )
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT_GENERATOR},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+            response_format={"type": "json_object"},
+        )
+        raw_json = resp.choices[0].message.content or "{}"
+        lote_plans = _parse_plans(raw_json, f"{batch_id}_l{lote_idx}", agent_id, adapter)
+    except Exception:
+        lote_plans = []
+
+    esperados = sum(lote_distribucion.values())
+    if len(lote_plans) < esperados:
+        faltan = esperados - len(lote_plans)
+        extra_dist = _distribuir(faltan, list(lote_distribucion.keys()))
+        lote_plans.extend(_generar_planes_heuristicos(analisis, agent_name, extra_dist, batch_id))
+    return lote_plans
+
+
+def _generar_via_gpt_en_lotes(
+    analisis: Dict[str, Any],
+    agent_name: str,
+    distribucion: Dict[str, int],
+    escenarios_extra: Optional[List[str]],
+    openai_key: str,
+    batch_id: str,
+    agent_id: str,
+    adapter: str,
+) -> List[ConversationPlan]:
+    """Genera la distribucion completa en varios lotes. Dentro de cada tanda,
+    varias 'obreras' (llamadas al LLM) corren EN PARALELO (mas rapido para
+    volumenes grandes tipo 500). Entre tandas, se acumulan los openers ya
+    usados y se le pasan a la siguiente tanda para que no se repitan --
+    mantiene la diversidad incluso a gran escala.
+    """
+    from openai import OpenAI
+    client = OpenAI(api_key=openai_key)
+
+    lotes = _dividir_distribucion_en_lotes(distribucion, _MAX_CONVERSACIONES_POR_LLAMADA)
+    plans: List[ConversationPlan] = []
+    openers_usados: List[str] = []
+
+    for inicio in range(0, len(lotes), _LOTES_CONCURRENTES_POR_TANDA):
+        tanda = lotes[inicio:inicio + _LOTES_CONCURRENTES_POR_TANDA]
+        openers_para_tanda = list(openers_usados[-60:])
+        with ThreadPoolExecutor(max_workers=len(tanda)) as ex:
+            futuros = [
+                ex.submit(
+                    _generar_un_lote, client, analisis, agent_name, lote_distribucion,
+                    escenarios_extra, openers_para_tanda, batch_id, inicio + i, agent_id, adapter,
+                )
+                for i, lote_distribucion in enumerate(tanda)
+            ]
+            for fut in futuros:
+                lote_plans = fut.result()
+                for p in lote_plans:
+                    if p.turns:
+                        openers_usados.append(p.turns[0].message_template)
+                plans.extend(lote_plans)
+
+    for i, p in enumerate(plans, start=1):
+        p.plan_id = f"conv_{i:02d}"
+    return plans
+
+
 def generar_batch(
     analisis: Dict[str, Any],
     agent_name: str,
@@ -604,25 +725,34 @@ def generar_batch(
         )
 
     plans: List[ConversationPlan] = []
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=openai_key)
+    if total > _MAX_CONVERSACIONES_POR_LLAMADA:
+        try:
+            plans = _generar_via_gpt_en_lotes(
+                analisis, agent_name, distribucion, escenarios_extra,
+                openai_key, batch_id, agent_id, adapter,
+            )
+        except Exception:
+            plans = _generar_planes_heuristicos(analisis, agent_name, distribucion, batch_id)
+    else:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
 
-        prompt = _build_generator_prompt(analisis, agent_name, distribucion, escenarios_extra)
-        resp = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT_GENERATOR},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.7,
-            response_format={"type": "json_object"},
-        )
-        raw_json = resp.choices[0].message.content or "{}"
-        plans = _parse_plans(raw_json, batch_id, agent_id, adapter)
+            prompt = _build_generator_prompt(analisis, agent_name, distribucion, escenarios_extra)
+            resp = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT_GENERATOR},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+                response_format={"type": "json_object"},
+            )
+            raw_json = resp.choices[0].message.content or "{}"
+            plans = _parse_plans(raw_json, batch_id, agent_id, adapter)
 
-    except Exception:
-        plans = _generar_planes_heuristicos(analisis, agent_name, distribucion, batch_id)
+        except Exception:
+            plans = _generar_planes_heuristicos(analisis, agent_name, distribucion, batch_id)
 
     # Si GPT devolvió menos planes de los pedidos, completar con heurísticos
     if len(plans) < total:
