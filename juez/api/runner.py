@@ -965,16 +965,12 @@ def run_n8n_single(
             except Exception as exc:
                 artef = {"error": str(exc)}
 
-<<<<<<< Updated upstream
         # Copia SIN filtrar -- el informe no tecnico siempre muestra las 3
         # secciones completas (seguridad/funcional/tecnico), independiente
         # de modo_qa (que solo afecta el score y el reporte tecnico clasico).
         todos_los_problemas = list(analisis.get("problemas", []))
 
         # Modo QA: filtra los hallazgos a técnico / funcional antes de puntuar.
-=======
-        # Modo QA: filtra los hallazgos a tÃ©cnico / funcional antes de puntuar.
->>>>>>> Stashed changes
         if modo_qa and modo_qa != "ambos":
             from juez.evaluation.qa_mode import filtrar_problemas
             analisis["problemas"] = filtrar_problemas(analisis.get("problemas", []), modo_qa)
