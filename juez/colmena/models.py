@@ -143,6 +143,7 @@ class ProjectEvaluationReport(BaseModel):
     human_review_required: list[str] = Field(default_factory=list)
     legacy_component_score: float | None = None
     legacy_component_findings: list[dict[str, Any]] = Field(default_factory=list)
+    dynamic_cost_summary: dict[str, Any] | None = None
 
     model_config = {"extra": "forbid"}
 

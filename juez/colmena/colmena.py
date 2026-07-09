@@ -112,15 +112,41 @@ _OBRERAS_ESTATICAS = {
 }
 
 
-def _obreras_dinamicas():
+def _obreras_dinamicas(purposes: dict[str, str] | None = None, cost_meter: Any = None):
     from .obreras_dinamicas import exploradora, ninera, performance
-    return [exploradora, ninera, performance]
+
+    def _exploradora(c):
+        return exploradora(c, cost_meter)
+
+    def _ninera(c):
+        return ninera(c, cost_meter)
+
+    obreras = [_exploradora, _ninera, performance]
+    if purposes:
+        from .purpose_check import verificar_proposito
+
+        def proposito(c):
+            return verificar_proposito(c, purposes, cost_meter)
+
+        obreras.append(proposito)
+    return obreras
 
 
 # --------------------------------------------------------------------------- Reina (orquesta)
-def run_colmena(project_id: str, componentes: list[Componente], incluir_dinamicas: bool = True) -> ColmenaResult:
-    """Corre TODAS las obreras (estáticas + dinámicas) EN PARALELO sobre los componentes."""
-    dinamicas = _obreras_dinamicas() if incluir_dinamicas else []
+def run_colmena(
+    project_id: str,
+    componentes: list[Componente],
+    incluir_dinamicas: bool = True,
+    purposes: dict[str, str] | None = None,
+    cost_meter: Any = None,
+) -> ColmenaResult:
+    """Corre TODAS las obreras (estáticas + dinámicas) EN PARALELO sobre los componentes.
+
+    `purposes` (opcional): mapa componente -> proposito esperado, declarado en
+    reglas_negocio.json. Si viene poblado y incluir_dinamicas=True, se activa la
+    obrera "Proposito" que reusa la rubrica task_success del motor central.
+    """
+    dinamicas = _obreras_dinamicas(purposes, cost_meter) if incluir_dinamicas else []
     tareas = []
     for c in componentes:
         for obrera in _OBRERAS_ESTATICAS.get(c.kind, []):

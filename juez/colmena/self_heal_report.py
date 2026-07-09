@@ -28,6 +28,7 @@ def render_self_heal_report(result: SelfHealResult) -> str:
         f"  Fixes revertidos        : {result.rolled_back_fixes}",
         f"  Hallazgos bloqueados    : {result.blocked_findings}",
         f"  Fixes fallidos          : {result.failed_fixes}",
+        f"  Fixer generico costo    : {_format_cost_summary(result.generic_fixer_cost_summary)}",
         f"  Audit log               : {result.audit_log_path or 'n/a'}",
         "=" * 80,
         "  ITERACIONES:",
@@ -51,7 +52,8 @@ def render_self_heal_report(result: SelfHealResult) -> str:
             lines.append("      fixer generico - intentos:")
             for att in item.generic_fixer_attempts:
                 estado = "APROBADO" if att.get("approved") else "descartado"
-                lines.append(f"        intento {att.get('attempt_no')} [{estado}]: {att.get('reason')}")
+                usage = _format_attempt_usage(att)
+                lines.append(f"        intento {att.get('attempt_no')} [{estado}]{usage}: {att.get('reason')}")
     lines.append("")
     lines.append("  REQUIERE REVISION HUMANA:")
     if not result.human_review_required:
@@ -65,7 +67,8 @@ def render_self_heal_report(result: SelfHealResult) -> str:
         if item.get("generic_fixer_attempts"):
             lines.append("      fixer generico - propuestas descartadas:")
             for att in item["generic_fixer_attempts"]:
-                lines.append(f"        intento {att.get('attempt_no')}: {att.get('reason')}")
+                usage = _format_attempt_usage(att)
+                lines.append(f"        intento {att.get('attempt_no')}{usage}: {att.get('reason')}")
     lines.extend(
         [
             "=" * 80,
@@ -77,6 +80,32 @@ def render_self_heal_report(result: SelfHealResult) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _format_cost_summary(summary: dict | None) -> str:
+    if not summary:
+        return "n/a"
+    return (
+        f"{summary.get('total_calls', 0)} llamada(s), "
+        f"{summary.get('total_tokens', 0)} tokens, "
+        f"USD ~{summary.get('total_cost_usd', 0)}"
+    )
+
+
+def _format_attempt_usage(att: dict) -> str:
+    model = att.get("model")
+    total_tokens = att.get("total_tokens")
+    cost = att.get("estimated_cost_usd")
+    if not model and total_tokens is None and cost is None:
+        return ""
+    parts = []
+    if model:
+        parts.append(str(model))
+    if total_tokens is not None:
+        parts.append(f"{total_tokens} tokens")
+    if cost is not None:
+        parts.append(f"USD ~{cost}")
+    return " (" + ", ".join(parts) + ")"
 
 
 def write_self_heal_report(result: SelfHealResult, output_dir: Path | str = "outputs") -> SelfHealResult:

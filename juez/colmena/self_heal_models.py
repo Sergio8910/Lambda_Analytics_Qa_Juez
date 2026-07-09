@@ -67,6 +67,7 @@ class SelfHealResult:
     failed_fixes: int = 0
     human_review_required: list[dict] = field(default_factory=list)
     iterations: list[SelfHealIteration] = field(default_factory=list)
+    generic_fixer_cost_summary: dict | None = None
     audit_log_path: str | None = None
     txt_report_path: str | None = None
     json_report_path: str | None = None

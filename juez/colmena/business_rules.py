@@ -90,6 +90,30 @@ def _load_explicit_rules(root: Path) -> list[BusinessRule]:
     return []
 
 
+def load_declared_purposes(root: Path) -> dict[str, str]:
+    """Lee, del mismo archivo explicito de reglas de negocio, un mapa opcional
+    componente -> proposito esperado (formato libre, admite 'EXITO = ... FALLO = ...'
+    para dar un criterio absoluto, igual que expected_output en el motor central).
+
+    Sin el archivo o sin esa clave, devuelve {} (sin cambio de comportamiento).
+    """
+    for name in _EXPLICIT_FILENAMES:
+        path = root / name
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        crudo = data.get("proposito_por_componente")
+        if not isinstance(crudo, dict):
+            continue
+        return {str(k): str(v) for k, v in crudo.items() if isinstance(v, str) and v.strip()}
+    return {}
+
+
 def _infer_rules_from_docs(root: Path) -> list[BusinessRule]:
     candidatos = []
     readme = root / "README.md"

@@ -50,6 +50,26 @@ def _prompt_project(base: Path) -> Path:
     return root
 
 
+def _no_auth_project(base: Path) -> Path:
+    root = base / "no_auth_project"
+    root.mkdir()
+    _write(
+        root / "app.py",
+        """
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/data")
+def data():
+    return {"ok": True}
+""".strip()
+        + "\n",
+    )
+    _write(root / "README.md", "Instalacion\nEjecucion\nTests\nEnv\n")
+    return root
+
+
 def test_autonomous_self_heal_keeps_fix_that_improves_score() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
@@ -149,6 +169,43 @@ def test_cli_accepts_repair_mode_autonomous() -> None:
         assert proc.returncode == 0, proc.stderr
         assert "SELF-HEAL AUTONOMO" in proc.stdout
         assert "timeout=10" in (root / "app.py").read_text(encoding="utf-8")
+
+
+def test_cli_accepts_enable_generic_fixer_without_manual_hook() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        root = _no_auth_project(base)
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3])
+        env["OPENAI_API_KEY"] = ""
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "juez",
+                "colmena",
+                "--project",
+                str(root),
+                "--repair-mode",
+                "autonomous",
+                "--enable-generic-fixer",
+                "--max-iterations",
+                "1",
+                "--max-attempts-per-finding",
+                "1",
+            ],
+            cwd=base,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+
+        assert proc.returncode == 0, proc.stderr
+        assert "SELF-HEAL AUTONOMO" in proc.stdout
+        assert "fixer generico" in proc.stdout.lower()
+        assert "sin LLM disponible" in proc.stdout
 
 
 def test_colmena_module_cli_accepts_repair_mode_autonomous() -> None:

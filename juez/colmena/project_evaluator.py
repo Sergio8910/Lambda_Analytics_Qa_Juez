@@ -40,7 +40,7 @@ def evaluate_project_path(
     classification = classify_project(inventory)
     findings = evaluate_project_workers(root, inventory)
 
-    from .business_rules import business_rules_worker_findings, run_functional_verification
+    from .business_rules import business_rules_worker_findings, load_declared_purposes, run_functional_verification
 
     rule_findings, rules_report = business_rules_worker_findings(root, inventory)
     findings.extend(rule_findings)
@@ -48,16 +48,25 @@ def evaluate_project_path(
 
     legacy_score: float | None = None
     legacy_findings: list[dict[str, Any]] = []
+    cost_summary: dict[str, Any] | None = None
     legacy_components = _components_from_inventory(root, inventory)
     if legacy_components:
+        purposes = load_declared_purposes(root) if incluir_dinamicas else {}
+        cost_meter = _new_cost_meter() if incluir_dinamicas else None
         legacy_result = run_colmena(
             project_id or root.name,
             legacy_components,
             incluir_dinamicas=incluir_dinamicas,
+            purposes=purposes,
+            cost_meter=cost_meter,
         )
         legacy_score = legacy_result.score
         legacy_findings = legacy_result.hallazgos
         findings.extend(_normalize_legacy_findings(legacy_result.hallazgos, len(findings)))
+        if cost_meter is not None:
+            summary = cost_meter.summary()
+            if summary.get("total_calls"):
+                cost_summary = summary
 
     score = score_project(findings)
     return ProjectEvaluationReport(
@@ -72,7 +81,17 @@ def evaluate_project_path(
         human_review_required=[f.id for f in findings if not f.auto_fix_available and f.severity in {"critical", "high"}],
         legacy_component_score=legacy_score,
         legacy_component_findings=legacy_findings,
+        dynamic_cost_summary=cost_summary,
     )
+
+
+def _new_cost_meter():
+    try:
+        from juez.evaluation.contra_agente.synthetic.cost_meter import CostMeter
+
+        return CostMeter()
+    except Exception:
+        return None
 
 
 def score_project(findings: list[NormalizedFinding]) -> ProjectScore:
@@ -149,6 +168,13 @@ def render_project_report(report: ProjectEvaluationReport) -> str:
                 lines.append(f"      Recomendacion: {finding.recommendation}")
     else:
         lines.append("    Sin hallazgos relevantes.")
+    if report.dynamic_cost_summary:
+        s = report.dynamic_cost_summary
+        lines.append("")
+        lines.append(
+            f"  COSTO OBRERAS DINAMICAS: {s.get('total_calls', 0)} llamada(s), "
+            f"{s.get('total_tokens', 0)} tokens, USD ~{s.get('total_cost_usd', 0)}"
+        )
     lines.append("")
     lines.append("  AUTO-FIX:")
     lines.append(f"    Corregibles automaticamente: {', '.join(report.auto_fixable) or 'ninguno'}")
@@ -172,8 +198,31 @@ def write_project_outputs(report: ProjectEvaluationReport, output_dir: Path | st
     return txt, js
 
 
+_OBJECTIVES_FILENAMES = ("objetivos_flujos.json", "objectives.json")
+
+
+def _load_declared_objectives(root: Path) -> dict[str, list[dict[str, Any]]]:
+    """Lee un manifiesto opcional que declara objetivos por flujo n8n.
+
+    Formato: {"<nombre o archivo del flujo>": [{"id": ..., "descripcion": ..., "kind": ...}, ...]}
+    Sin el archivo, comportamiento identico a hoy (objetivos vacios, sin regresion).
+    """
+    for name in _OBJECTIVES_FILENAMES:
+        path = root / name
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            return {str(k): v for k, v in data.items() if isinstance(v, list)}
+    return {}
+
+
 def _components_from_inventory(root: Path, inventory) -> list[Componente]:
     components: list[Componente] = []
+    declared_objectives = _load_declared_objectives(root)
     for asset in inventory.assets:
         path = root / asset.path
         if asset.kind == "n8n_workflow":
@@ -181,12 +230,15 @@ def _components_from_inventory(root: Path, inventory) -> list[Componente]:
                 workflow = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
             except Exception:
                 continue
+            nombre = asset.name or path.stem
+            objetivos = declared_objectives.get(nombre) or declared_objectives.get(asset.path) or declared_objectives.get(path.name) or []
             components.append(
                 Componente(
                     kind="n8n",
-                    nombre=asset.name or path.stem,
+                    nombre=nombre,
                     workflow_json=workflow,
                     workflow_path=str(path),
+                    objetivos=objetivos,
                 )
             )
         elif asset.kind in {"prompt", "prompt_doc"}:

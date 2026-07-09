@@ -78,6 +78,29 @@ def main() -> None:
     colmena.add_argument("--no-git", action="store_true", help="No crear backup branch ni commits automaticos")
     colmena.add_argument("--max-lines-per-fix", type=int, default=40, help="Maximo de lineas por fix autonomo")
     colmena.add_argument("--fast-reeval", action="store_true", help="Reserva para reevaluacion selectiva")
+    colmena.add_argument(
+        "--enable-generic-fixer",
+        action="store_true",
+        help="Activa el ciclo generar-probar-reintentar en sandbox para hallazgos sin fixer especifico.",
+    )
+    colmena.add_argument(
+        "--max-attempts-per-finding",
+        type=int,
+        default=3,
+        help="Intentos del fixer generico por hallazgo (techo absoluto 5).",
+    )
+    colmena.add_argument(
+        "--max-findings-per-run",
+        type=int,
+        default=None,
+        help="Si se pasa, sobreescribe --max-iterations para esta corrida.",
+    )
+    colmena.add_argument(
+        "--time-limit-per-finding",
+        type=int,
+        default=10,
+        help="Minutos maximos que el fixer generico puede gastar por hallazgo.",
+    )
 
     sub.add_parser("evaluate-agent", help="Fallback historico: use juez/evaluar_elevenlabs.py")
     sub.add_parser("evaluate-workflow", help="Fallback historico: use juez/evaluar_n8n.py")
@@ -102,13 +125,19 @@ def _run_colmena(args: argparse.Namespace) -> None:
         raise SystemExit(f"El proyecto no existe: {project_path}")
     if project_path.is_dir():
         if args.repair_mode == "autonomous":
+            effective_max_iterations = (
+                args.max_findings_per_run if args.max_findings_per_run is not None else args.max_iterations
+            )
             result = write_self_heal_report(
                 run_self_heal(
                     project_path,
                     min_confidence=args.min_confidence,
-                    max_iterations=args.max_iterations,
+                    max_iterations=effective_max_iterations,
                     max_lines_per_fix=args.max_lines_per_fix,
                     fast_reeval=args.fast_reeval,
+                    enable_generic_fixer=args.enable_generic_fixer,
+                    max_attempts_per_finding=args.max_attempts_per_finding,
+                    time_limit_per_finding_min=args.time_limit_per_finding,
                 )
             )
             print(render_self_heal_report(result))

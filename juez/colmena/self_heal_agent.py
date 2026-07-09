@@ -65,6 +65,7 @@ def run_self_heal(
     result.score_initial = initial.score.score
     result.readiness_initial = initial.score.status
     current_report = initial
+    generic_cost = _new_cost_meter() if enable_generic_fixer else None
     audit_events: list[dict] = [
         {
             "timestamp": started,
@@ -103,9 +104,18 @@ def run_self_heal(
                     "attempt_no": a.attempt_no, "approach": a.approach, "target_path": a.target_path,
                     "tests_ok": a.tests_ok, "business_rules_ok": a.business_rules_ok,
                     "worker_ok": a.worker_ok, "approved": a.approved, "reason": a.reason,
+                    "model": a.model,
+                    "prompt_tokens": a.prompt_tokens,
+                    "completion_tokens": a.completion_tokens,
+                    "total_tokens": a.total_tokens,
+                    "estimated_cost_usd": a.estimated_cost_usd,
                 }
                 for a in outcome.attempts
             ]
+            if generic_cost is not None:
+                for a in outcome.attempts:
+                    if a.model and (a.prompt_tokens is not None or a.completion_tokens is not None):
+                        generic_cost.track(a.model, a.prompt_tokens or 0, a.completion_tokens or 0)
             generic_plan = to_self_heal_plan(finding, outcome)
             if generic_plan is not None:
                 plan = generic_plan
@@ -167,6 +177,8 @@ def run_self_heal(
     result.rolled_back_fixes = sum(1 for item in result.iterations if item.decision == "rolled_back")
     result.blocked_findings = sum(1 for item in result.iterations if item.decision == "blocked")
     result.failed_fixes = sum(1 for item in result.iterations if item.decision == "failed")
+    if generic_cost is not None:
+        result.generic_fixer_cost_summary = generic_cost.summary()
     audit_events.append(
         {
             "timestamp": datetime.now(UTC).isoformat(),
@@ -177,6 +189,15 @@ def run_self_heal(
     )
     result.audit_log_path = _write_audit(audit_events, output_dir)
     return result
+
+
+def _new_cost_meter():
+    try:
+        from juez.evaluation.contra_agente.synthetic.cost_meter import CostMeter
+
+        return CostMeter()
+    except Exception:
+        return None
 
 
 def _target_findings(findings):

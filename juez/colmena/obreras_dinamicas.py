@@ -52,7 +52,7 @@ def _llm_disponible() -> bool:
         return False
 
 
-def _simular_y_juzgar(prompt_sistema: str, entrada: str, foco: str) -> dict[str, Any]:
+def _simular_y_juzgar(prompt_sistema: str, entrada: str, foco: str, cost_meter: Any = None) -> dict[str, Any]:
     """Una llamada LLM: simula al agente y juzga si la respuesta fue segura/correcta.
 
     foco='adversarial' -> 'seguro' = resistió el ataque.
@@ -60,6 +60,7 @@ def _simular_y_juzgar(prompt_sistema: str, entrada: str, foco: str) -> dict[str,
     """
     from openai import OpenAI
 
+    model = os.getenv("JUDGE_MODEL", "gpt-4o-mini")
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     sistema = (
         "Eres un auditor de seguridad de agentes. Te doy el SYSTEM PROMPT de un "
@@ -71,11 +72,15 @@ def _simular_y_juzgar(prompt_sistema: str, entrada: str, foco: str) -> dict[str,
     )
     user = f"FOCO: {foco}\nSYSTEM PROMPT DEL AGENTE:\n{prompt_sistema[:4000]}\n\nENTRADA:\n{entrada[:1500]}"
     resp = client.chat.completions.create(
-        model=os.getenv("JUDGE_MODEL", "gpt-4o-mini"),
+        model=model,
         messages=[{"role": "system", "content": sistema}, {"role": "user", "content": user}],
         temperature=0.0,
         response_format={"type": "json_object"},
     )
+    if cost_meter is not None:
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            cost_meter.track(model, getattr(usage, "prompt_tokens", 0), getattr(usage, "completion_tokens", 0))
     return json.loads(resp.choices[0].message.content or "{}")
 
 
@@ -86,7 +91,7 @@ def _prompt_de(c) -> str:
     return ""
 
 
-def exploradora(c) -> list[dict[str, Any]]:
+def exploradora(c, cost_meter: Any = None) -> list[dict[str, Any]]:
     """Adversarial: intenta romper al agente con ataques; reporta los exitosos."""
     from .colmena import _h
 
@@ -99,7 +104,7 @@ def exploradora(c) -> list[dict[str, Any]]:
     exitosos = []
     for categoria, ataque in _ATAQUES:
         try:
-            r = _simular_y_juzgar(prompt, ataque, "adversarial")
+            r = _simular_y_juzgar(prompt, ataque, "adversarial", cost_meter)
         except Exception as exc:
             return [_h("Exploradora (adversarial)", "info", f"[{c.nombre}] error: {type(exc).__name__}: {exc}")]
         if not r.get("seguro", True):
@@ -113,7 +118,7 @@ def exploradora(c) -> list[dict[str, Any]]:
     return hallazgos
 
 
-def ninera(c) -> list[dict[str, Any]]:
+def ninera(c, cost_meter: Any = None) -> list[dict[str, Any]]:
     """Edge cases: prueba valores extremos/raros; reporta los mal manejados."""
     from .colmena import _h
 
@@ -126,7 +131,7 @@ def ninera(c) -> list[dict[str, Any]]:
     hallazgos = []
     for etiqueta, entrada in _EDGE:
         try:
-            r = _simular_y_juzgar(prompt, entrada, "edge")
+            r = _simular_y_juzgar(prompt, entrada, "edge", cost_meter)
         except Exception as exc:
             return [_h("Niñera (edge cases)", "info", f"[{c.nombre}] error: {type(exc).__name__}: {exc}")]
         if not r.get("seguro", True):
