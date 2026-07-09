@@ -90,6 +90,7 @@ TIPOS_TRIGGER: Set[str] = {
     "n8n-nodes-base.cron",
     "n8n-nodes-base.emailReadImap",
     "n8n-nodes-base.formTrigger",
+    "n8n-nodes-base.telegramTrigger",
     "@n8n/n8n-nodes-langchain.chatTrigger",
     "n8n-nodes-base.executeWorkflowTrigger",
     "n8n-nodes-base.errorTrigger",
@@ -391,6 +392,17 @@ class N8nAnalyzer:
                 "instrucciones": [
                     "El formulario tiene una URL publica accesible",
                     "Enviar un POST con los campos del formulario al endpoint del form trigger",
+                ],
+            },
+            "n8n-nodes-base.telegramTrigger": {
+                "tipo": "telegram",
+                "label": "Telegram Trigger",
+                "testeable": False,
+                "estrategia": "Enviar un mensaje real al bot de Telegram conectado al workflow",
+                "instrucciones": [
+                    "Este flujo no expone un webhook HTTP que el Juez pueda invocar directamente",
+                    "Para generar historial en n8n, envia un mensaje real al bot/canal configurado en Telegram",
+                    "Si quieres pruebas automaticas desde Gamma, agrega un Webhook Trigger de QA o configura credenciales de Telegram de prueba",
                 ],
             },
             "n8n-nodes-base.errorTrigger": {
@@ -1876,6 +1888,7 @@ def ejecutar_contra_agente(
     e2e_cases: int = 0,
     e2e_model: str = "",
     e2e_real_inventario_id: Optional[int] = None,
+    modo_ejecucion: str = "real",
 ) -> tuple:
     """Corre el contra-agente contra el flujo n8n. Retorna (batch_result, reporte_texto).
 
@@ -1905,7 +1918,16 @@ def ejecutar_contra_agente(
     )
 
     def _adapter_factory(_adapter_type: str, _agent_id: str):
-        return _N8nAdapter(webhook_url=webhook_url)
+        input_fields: List[str] = []
+        for tool in analisis_ca.get("herramientas", []) or analisis_ca.get("tools", []):
+            for field in tool.get("campos_requeridos", []) or []:
+                if field not in input_fields:
+                    input_fields.append(field)
+        return _N8nAdapter(
+            webhook_url=webhook_url,
+            input_fields=input_fields,
+            agent_name=agent_name,
+        )
 
     evaluator = _TurnEvaluator(openai_key=openai_key)
 
@@ -1918,6 +1940,7 @@ def ejecutar_contra_agente(
                 evaluator,
                 openai_key=openai_key,
                 synthetic_context={
+                    "force_mock_adapter": modo_ejecucion == "sandbox",
                     "system_prompt": analisis_ca.get("prompt", {}).get("completo", ""),
                     "herramientas": analisis_ca.get("herramientas", []),
                     "model": e2e_model or os.getenv("JUEZ_E2E_MODEL", "gpt-4o-mini"),
@@ -1931,6 +1954,7 @@ def ejecutar_contra_agente(
             evaluator,
             openai_key=openai_key,
             synthetic_context={
+                "force_mock_adapter": modo_ejecucion == "sandbox",
                 "system_prompt": analisis_ca.get("prompt", {}).get("completo", ""),
                 "herramientas": analisis_ca.get("herramientas", []),
                 "model": e2e_model or os.getenv("JUEZ_E2E_MODEL", "gpt-4o-mini"),

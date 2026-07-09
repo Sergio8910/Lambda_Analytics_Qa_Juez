@@ -1,0 +1,29 @@
+<service>
+  <id>JuezApi</id>
+  <name>Lambda Analytics Juez API</name>
+  <description>API FastAPI del Juez (uvicorn) en 127.0.0.1:8765. Servida públicamente por el sitio IIS 'Juez' vía reverse proxy ARR.</description>
+
+  <executable>c:\inetpub\wwwroot\Lambda_Analytics_Qa_Juez\venv\Scripts\python.exe</executable>
+  <arguments>-m uvicorn juez.api.main:app --host 127.0.0.1 --port 8765 --log-level info</arguments>
+  <workingdirectory>c:\inetpub\wwwroot\Lambda_Analytics_Qa_Juez</workingdirectory>
+
+  <env name="JUEZ_API_HOST" value="127.0.0.1" />
+  <env name="JUEZ_API_PORT" value="8765" />
+  <env name="PYTHONUNBUFFERED" value="1" />
+
+  <startmode>Automatic</startmode>
+
+  <!-- Reinicio automático si uvicorn cae -->
+  <onfailure action="restart" delay="5 sec" />
+  <onfailure action="restart" delay="10 sec" />
+  <resetfailure>1 hour</resetfailure>
+
+  <!-- Logs rotados en service\logs -->
+  <logpath>c:\inetpub\wwwroot\Lambda_Analytics_Qa_Juez\service\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+
+  <stoptimeout>20 sec</stoptimeout>
+</service>

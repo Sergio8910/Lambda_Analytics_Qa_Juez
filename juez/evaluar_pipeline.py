@@ -53,54 +53,16 @@ try:
     from juez.evaluation.contra_agente.models import ConversationBatch
 
     def _ejecutar_batch(batch, adapter_factory, evaluator, openai_key="", concurrencia=3):
-        """Ejecuta un batch de conversaciones con concurrencia."""
-        import concurrent.futures
-        results = []
-        def _run_one(plan):
-            adapter = adapter_factory("n8n", plan.agent_id)
-            worker = ConversationWorker(plan, adapter, evaluator, openai_key=openai_key)
-            return worker.run()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrencia) as ex:
-            futures = {ex.submit(_run_one, p): p for p in batch.plans}
-            for fut in concurrent.futures.as_completed(futures):
-                try:
-                    results.append(fut.result())
-                except Exception:
-                    pass
-        from juez.evaluation.contra_agente.models import BatchResult
-        total = len(results)
-        passed = sum(1 for r in results if r.passed)
-        by_cat: Dict = {}
-        for r in results:
-            cat = r.category
-            if cat not in by_cat:
-                by_cat[cat] = {"total": 0, "passed": 0, "pass_rate": 0.0}
-            by_cat[cat]["total"] += 1
-            if r.passed:
-                by_cat[cat]["passed"] += 1
-        for cat in by_cat:
-            t = by_cat[cat]["total"]
-            by_cat[cat]["pass_rate"] = round(by_cat[cat]["passed"] / t, 3) if t else 0.0
-        scorecard = {}
-        all_scores: Dict[str, List[float]] = {}
-        for r in results:
-            for tr in r.turn_results:
-                for metric, val in tr.scores.items():
-                    all_scores.setdefault(metric, []).append(val)
-        for metric, vals in all_scores.items():
-            scorecard[metric] = round(sum(vals) / len(vals), 3)
-        return BatchResult(
-            batch_id=batch.batch_id,
-            agent_id=batch.agent_id,
-            total=total,
-            passed=passed,
-            failed=total - passed,
-            pass_rate=round(passed / total, 3) if total else 0.0,
-            by_category=by_cat,
-            collapse_pattern={},
-            results=results,
-            recommendations=[],
-            scorecard=scorecard,
+        """Ejecuta un batch de conversaciones con el pool moderno."""
+        from juez.evaluation.contra_agente.pool import ejecutar_batch as _pool_ejecutar_batch
+
+        if concurrencia:
+            batch.concurrency = concurrencia
+        return _pool_ejecutar_batch(
+            batch,
+            adapter_factory,
+            evaluator,
+            openai_key=openai_key,
         )
 
     HAS_CA = True
@@ -395,6 +357,7 @@ def _evaluar_con_analisis(
     openai_key: str,
     total_conv: int,
     concurrencia: int,
+    modo_ejecucion: str = "real",
 ) -> NodeResult:
     """Recibe un preview con analisis ya hecho (y opcionalmente ajustado por el usuario)
     y solo corre la parte dinámica (contra-agente). Retorna NodeResult completo."""
@@ -432,6 +395,7 @@ def _evaluar_con_analisis(
                     analisis=analisis,
                     openai_key=openai_key,
                     el_key=elevenlabs_key,
+                    modo_ejecucion=modo_ejecucion,
                 )
             evaluator    = _TE(openai_key=openai_key)
             batch_result = _ejecutar_batch(batch, _af, evaluator, openai_key=openai_key, concurrencia=concurrencia)
@@ -452,7 +416,13 @@ def _evaluar_con_analisis(
         _spec = _ilu.spec_from_file_location("evaluar_n8n", Path(__file__).parent / "evaluar_n8n.py")
         _mod  = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_mod)
 
-        if HAS_CA and total_conv > 0 and webhook:
+        if HAS_CA and total_conv > 0 and modo_ejecucion == "sandbox":
+            batch_result, reporte_ca = _mod.ejecutar_contra_agente(
+                analisis_n8n=analisis, webhook_url=webhook,
+                agent_name=nombre, total_conv=total_conv, concurrencia=concurrencia,
+                modo_ejecucion="sandbox",
+            )
+        elif HAS_CA and total_conv > 0 and webhook:
             # T-14: Verificar si el webhook está activo antes de gastar llamadas GPT
             _wh_activo, _wh_msg = _verificar_webhook_activo(webhook)
             if not _wh_activo:
@@ -485,6 +455,7 @@ def _evaluar_con_analisis(
                 batch_result, reporte_ca = _mod.ejecutar_contra_agente(
                     analisis_n8n=analisis, webhook_url=webhook,
                     agent_name=nombre, total_conv=total_conv, concurrencia=concurrencia,
+                    modo_ejecucion="real",
                 )
         elif HAS_CA and total_conv > 0 and not webhook:
             # No hay webhook — generar sección explicativa usando info del trigger

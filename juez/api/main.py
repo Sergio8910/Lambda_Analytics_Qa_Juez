@@ -17,6 +17,7 @@ os.environ.setdefault("DEEPEVAL_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("DEEPEVAL_TELEMETRY", "false")
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from juez.evaluation.report_models import EvaluationSpec, TestCase
@@ -24,6 +25,7 @@ from juez.evaluation.core.engine import EvaluationEngine
 from juez.evaluation.runner import run_agent
 from juez.api.schemas import EvaluateRequest, EvaluateResponse
 from juez.api.router_v1 import router as router_v1
+from prompt_eval.router import router as prompt_eval_router
 
 
 logger = logging.getLogger("lambda_judge_api")
@@ -47,8 +49,66 @@ app = FastAPI(
     version="1.1.0",
 )
 
+# CORS — el frontend (Gamma UI) llama a esta API directamente desde el navegador.
+# Sin esto, el preflight OPTIONS devuelve 405 y la UI marca "Sin conexión".
+# Orígenes configurables vía JUEZ_CORS_ORIGINS (lista separada por comas); el
+# fallback cubre los dominios conocidos de Gamma + localhost para desarrollo.
+_cors_env = os.getenv("JUEZ_CORS_ORIGINS", "")
+if _cors_env.strip():
+    _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+else:
+    _cors_origins = [
+        "https://gamma.lambdaanalytics.co",
+        "http://gamma.lambdaanalytics.co",
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://localhost:8080",
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Router v1: endpoints del evaluador nuevo
 app.include_router(router_v1)
+
+# App de "Evaluación de Agentes" (evaluation.api.app) montada como sub-app bajo
+# /eval. Expone en el MISMO proceso/URL desplegado los endpoints que antes solo
+# vivían en el servicio del puerto 8000 (no levantado en prod): en particular
+#   - POST /eval/v1/generate-scenarios   (genera escenarios desde el negocio)
+#   - POST /eval/v1/evaluate             (evalúa aceptando reglas editadas del plan)
+#   - POST /eval/v1/evaluation-plan, /eval/v1/generate-cases, etc.
+# Se monta como sub-app (en vez de copiar routers) para no duplicar código ni sus
+# dependencias. Una sub-app montada NO hereda el CORS del padre, así que se le
+# añade su propio CORSMiddleware con los mismos orígenes.
+try:
+    from fastapi.middleware.cors import CORSMiddleware as _CORS
+    from juez.evaluation.api.app import app as _evaluation_app
+
+    _evaluation_app.add_middleware(
+        _CORS,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.mount("/eval", _evaluation_app)
+    logger.info("Sub-app de evaluación montada en /eval")
+except Exception as _exc:  # el montaje no debe tumbar el arranque del Juez
+    logger.warning("No se pudo montar la sub-app de evaluación en /eval: %s", _exc)
+
+# Router de Prompt Eval (evaluación de un system prompt en aislamiento).
+# Expone POST /prompt_eval/evaluate y GET /prompt_eval/rules. Se omite su
+# ruta /health para no duplicar el /health que esta app ya define abajo
+# (FastAPI registraría dos rutas iguales y la segunda quedaría sombreada).
+for _r in prompt_eval_router.routes:
+    if getattr(_r, "path", None) != "/health":
+        app.router.routes.append(_r)
 
 
 @app.get("/health")

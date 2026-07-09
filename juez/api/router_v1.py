@@ -5,16 +5,19 @@ bajo el prefijo `/api/v1`.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from juez.api.jobs import get_store
-from juez.api.runner import run_elevenlabs_single, run_n8n_single, run_pipeline
+from juez.api.runner import run_elevenlabs_single, run_n8n_single, run_pipeline, run_proyecto
 from juez.api.schemas_v1 import (
     EvalElevenLabsRequest,
     EvalN8nRequest,
     EvalPipelineRequest,
+    EvalProyectoRequest,
+    EvaluationPlanRequest,
+    EvaluationPlanResponse,
     HealthResponse,
     JobCreatedResponse,
     JobListResponse,
@@ -55,6 +58,75 @@ def health() -> Dict[str, Any]:
         "evaluator_available": evaluator_available,
         "contra_agente_available": contra_agente_available,
     }
+
+
+# =============================================================================
+# PLAN DE EVALUACIÓN (solo-lectura)
+# =============================================================================
+
+
+@router.post("/evaluation-plan", response_model=EvaluationPlanResponse)
+def evaluation_plan(payload: EvaluationPlanRequest) -> Dict[str, Any]:
+    """Previsualiza QUÉ se le va a evaluar a un agente (reglas + datos).
+
+    Solo-lectura: NO ejecuta al agente ni corre la evaluación. Útil para que el
+    consumidor vea, antes de lanzar `/api/v1/evaluate`, qué reglas (métricas/umbrales)
+    se aplicarían y con qué datos (casos sintéticos) se probaría al agente.
+    """
+    try:
+        from collections import Counter
+
+        from juez.evaluation.autogen.prompt_analyzer import analyze_prompt
+        from juez.evaluation.autogen.case_generator import generate_cases as generate_autogen_cases
+        from juez.evaluation.metric_registry import METRICS
+
+        # 1) PERFIL — qué detectamos del agente a partir de su prompt.
+        profile = analyze_prompt(payload.prompt_base)
+        perfil = profile.model_dump(mode="json")
+
+        # 2) REGLAS — métricas que se aplicarían (las pedidas, o el catálogo completo).
+        nombres = payload.metrics if payload.metrics else list(METRICS.keys())
+        reglas: List[Dict[str, Any]] = []
+        for nombre in nombres:
+            md = METRICS.get(nombre)
+            if md is None:
+                reglas.append({
+                    "name": nombre,
+                    "existe": False,
+                    "nota": "Métrica desconocida; no está en el catálogo.",
+                })
+                continue
+            reglas.append({
+                "name": md.name,
+                "tipo": md.kind,
+                "umbral": md.default_threshold,
+                "requiere_contexto": md.requires_context,
+                "requiere_salida_esperada": md.requires_expected_output,
+                "existe": True,
+            })
+
+        # 3) DATOS — casos sintéticos con los que se evaluaría (opcional).
+        datos: List[Dict[str, Any]] = []
+        distribucion: Dict[str, int] = {}
+        if payload.incluir_casos:
+            cases = generate_autogen_cases(profile, n_cases=payload.n_cases, seed=payload.seed)
+            datos = [c.model_dump(mode="json") for c in cases]
+            tags = [t for c in cases for t in (c.tags or []) if t != "autogen"]
+            distribucion = dict(Counter(tags))
+
+        return {
+            "perfil_agente": perfil,
+            "reglas": reglas,
+            "datos": datos,
+            "resumen": {
+                "n_reglas": len(reglas),
+                "n_casos": len(datos),
+                "distribucion_por_tag": distribucion,
+                "metricas_personalizadas": bool(payload.metrics),
+            },
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # =============================================================================
@@ -120,6 +192,7 @@ def evaluate_n8n(req: EvalN8nRequest) -> Dict[str, Any]:
         total_conversaciones=req.total_conversaciones,
         concurrencia=req.concurrencia,
         escenarios=req.escenarios,
+        modo_ejecucion=req.modo_ejecucion,
         openai_key=req.openai_key or "",
         n8n_api_key=req.n8n_api_key or "",
         n8n_base_url=req.n8n_base_url or "",
@@ -159,6 +232,7 @@ def evaluate_pipeline(req: EvalPipelineRequest) -> Dict[str, Any]:
         total_conversaciones=req.total_conversaciones,
         concurrencia=req.concurrencia,
         escenarios=req.escenarios,
+        modo_ejecucion=req.modo_ejecucion,
         openai_key=req.openai_key or "",
         elevenlabs_key=req.elevenlabs_key or "",
         n8n_api_key=req.n8n_api_key or "",
@@ -168,6 +242,53 @@ def evaluate_pipeline(req: EvalPipelineRequest) -> Dict[str, Any]:
     return {
         "job_id": job_id,
         "kind": "pipeline",
+        "status": "queued",
+        "created_at": job["created_at"],
+        "poll_url": f"/api/v1/evaluate/{job_id}",
+    }
+
+
+@router.post("/evaluate/proyecto", response_model=JobCreatedResponse, status_code=202)
+def evaluate_proyecto(req: EvalProyectoRequest) -> Dict[str, Any]:
+    """Evaluación UNIFICADA de un proyecto → contrato firme.
+
+    Corre La Colmena (construcción: seguridad, flujos, objetivos, prompt) y,
+    opcionalmente, las conversaciones, y consolida todo en un solo JSON estable
+    con `score`, `estado`, `problemas[]` y `mejoras[]` (la mejora del prompt trae
+    `antes`/`despues` real, lista para aplicar). Retorna de inmediato con job_id.
+    """
+    if not req.prompt.strip() and not req.eleven_ids and not req.n8n_flows:
+        raise HTTPException(
+            status_code=400,
+            detail="El proyecto necesita al menos 'prompt', 'eleven_ids' o 'n8n_flows'.",
+        )
+
+    store = get_store()
+    job = store.create(kind="proyecto", params=req.model_dump(mode="json"))
+    job_id = job["job_id"]
+
+    store.run_in_thread(
+        job_id,
+        run_proyecto,
+        nombre=req.nombre,
+        prompt=req.prompt,
+        eleven_ids=req.eleven_ids,
+        n8n_flows=[f.model_dump(mode="json") for f in req.n8n_flows],
+        total_conversaciones=req.total_conversaciones,
+        concurrencia=req.concurrencia,
+        escenarios=req.escenarios,
+        incluir_conversaciones=req.incluir_conversaciones,
+        incluir_dinamicas=req.incluir_dinamicas,
+        modo_ejecucion=req.modo_ejecucion,
+        openai_key=req.openai_key or "",
+        elevenlabs_key=req.elevenlabs_key or "",
+        n8n_api_key=req.n8n_api_key or "",
+        n8n_base_url=req.n8n_base_url or "",
+    )
+
+    return {
+        "job_id": job_id,
+        "kind": "proyecto",
         "status": "queued",
         "created_at": job["created_at"],
         "poll_url": f"/api/v1/evaluate/{job_id}",
