@@ -1889,11 +1889,17 @@ def ejecutar_contra_agente(
     e2e_model: str = "",
     e2e_real_inventario_id: Optional[int] = None,
     modo_ejecucion: str = "real",
+    payload_template: Optional[Dict[str, Any]] = None,
 ) -> tuple:
     """Corre el contra-agente contra el flujo n8n. Retorna (batch_result, reporte_texto).
 
     Si `e2e_real_inventario_id` está set, los casos e2e usan datos reales de
     la BD productiva de Abad (read-only) para el snapshot esperado.
+
+    `payload_template`: ejemplo REAL del sobre que espera el webhook (ej. JSON
+    de WhatsApp Business API) con el marcador {{JUEZ_MENSAJE}} -- si se
+    provee, el adapter lo usa tal cual en vez del payload generico, para que
+    el flujo recorra todos sus nodos de verdad.
     """
     if not HAS_CONTRA_AGENTE:
         return None, "\n[CONTRA-AGENTE NO DISPONIBLE — módulos evaluation/ no encontrados]\n"
@@ -1927,6 +1933,7 @@ def ejecutar_contra_agente(
             webhook_url=webhook_url,
             input_fields=input_fields,
             agent_name=agent_name,
+            payload_template=payload_template,
         )
 
     evaluator = _TurnEvaluator(openai_key=openai_key)

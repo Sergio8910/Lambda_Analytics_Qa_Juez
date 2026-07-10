@@ -126,12 +126,16 @@ class EvalN8nRequest(BaseModel):
     """Request para evaluar un único flujo n8n."""
 
     flow: N8nFlowSource = Field(..., description="Origen del flujo a evaluar")
-    total_conversaciones: int = Field(20, ge=0, le=100)
+    total_conversaciones: int = Field(20, ge=0, le=500)
     concurrencia: int = Field(3, ge=1, le=20)
     escenarios: List[str] = Field(default_factory=list)
     modo_ejecucion: Literal["sandbox", "real"] = Field(
         "sandbox",
         description="sandbox = pruebas sin side effects; real = dispara n8n/ElevenLabs reales.",
+    )
+    reference_dataset_id: Optional[str] = Field(
+        None,
+        description="ID de un dataset de referencia (POST /reference-data/ingest). Si trae payload_template, se usa para disparar el webhook con la forma real que el flujo espera.",
     )
     openai_key: Optional[str] = None
     n8n_api_key: Optional[str] = Field(None, description="Override de N8N_API_KEY")
@@ -147,12 +151,16 @@ class EvalPipelineRequest(BaseModel):
     nombre: str = Field("Pipeline", description="Nombre del pipeline para el reporte")
     eleven_ids: List[str] = Field(default_factory=list, description="Lista de IDs de agentes ElevenLabs")
     n8n_flows: List[N8nFlowSource] = Field(default_factory=list, description="Lista de flujos n8n a incluir")
-    total_conversaciones: int = Field(20, ge=0, le=100)
+    total_conversaciones: int = Field(20, ge=0, le=500)
     concurrencia: int = Field(3, ge=1, le=20)
     escenarios: List[str] = Field(default_factory=list)
     modo_ejecucion: Literal["sandbox", "real"] = Field(
         "sandbox",
         description="sandbox = pruebas sin side effects; real = dispara n8n/ElevenLabs reales.",
+    )
+    reference_dataset_id: Optional[str] = Field(
+        None,
+        description="ID de un dataset de referencia (POST /reference-data/ingest). Si trae payload_template, se usa para disparar el webhook con la forma real que el flujo espera.",
     )
     openai_key: Optional[str] = None
     elevenlabs_key: Optional[str] = None
@@ -179,7 +187,7 @@ class EvalProyectoRequest(BaseModel):
     )
     eleven_ids: List[str] = Field(default_factory=list, description="IDs de agentes ElevenLabs (voz)")
     n8n_flows: List[N8nFlowSource] = Field(default_factory=list, description="Flujos n8n del proyecto")
-    total_conversaciones: int = Field(10, ge=0, le=100)
+    total_conversaciones: int = Field(10, ge=0, le=500)
     concurrencia: int = Field(3, ge=1, le=20)
     escenarios: List[str] = Field(default_factory=list)
     incluir_conversaciones: bool = Field(
@@ -188,7 +196,19 @@ class EvalProyectoRequest(BaseModel):
     )
     incluir_dinamicas: bool = Field(
         False,
-        description="Obreras dinámicas de La Colmena (adversarial/edge/performance). Cuestan tokens.",
+        description="Obreras dinámicas de La Colmena (adversarial/edge/performance/propósito). Cuestan tokens.",
+    )
+    reglas_negocio: List[str] = Field(
+        default_factory=list,
+        description="Reglas de negocio explícitas (alta confianza) para verificación funcional y gates automáticos.",
+    )
+    objetivos: Optional[Dict[str, List[Dict[str, Any]]]] = Field(
+        None,
+        description="Objetivos declarados por flujo n8n (nombre_del_flujo -> lista de objetivos) para objectives.py.",
+    )
+    reference_dataset_id: Optional[str] = Field(
+        None,
+        description="ID de un dataset de referencia previamente ingerido (POST /reference-data/ingest) para usar datos reales en las conversaciones de prueba.",
     )
     openai_key: Optional[str] = None
     elevenlabs_key: Optional[str] = None

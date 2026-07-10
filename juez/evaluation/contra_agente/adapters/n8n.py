@@ -1,9 +1,19 @@
 """Adapter n8n para el contra-agente.
 
 Envia mensajes a un flujo n8n via webhook con historial de conversacion.
+
+PAYLOAD REAL DE REFERENCIA: el payload "shotgun" de abajo (_build_payload)
+asume que el flujo es un webhook conversacional simple que lee ALGUNA clave
+de nivel superior (message/chatInput/text/...). Eso NO sirve para flujos
+que esperan un sobre anidado especifico -- ej. un flujo de WhatsApp Business
+API espera algo como entry[0].changes[0].value.messages[0].text.body, no una
+clave plana. Para esos casos, `payload_template` permite adjuntar un ejemplo
+REAL de ese sobre (con el texto del usuario reemplazado por un marcador) y el
+adapter lo usa tal cual, sustituyendo el marcador en cada turno.
 """
 from __future__ import annotations
 
+import copy
 import re
 import time
 import uuid
@@ -11,6 +21,22 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests
+
+# Marcador que el usuario deja en su payload_template donde debe ir el texto
+# del turno actual. Reemplazo recursivo, funciona a cualquier profundidad de
+# anidamiento (listas/dicts).
+MARCADOR_MENSAJE = "{{JUEZ_MENSAJE}}"
+MARCADOR_SESSION = "{{JUEZ_SESSION_ID}}"
+
+
+def _sustituir_marcadores(nodo: Any, mensaje: str, session_id: str) -> Any:
+    if isinstance(nodo, dict):
+        return {k: _sustituir_marcadores(v, mensaje, session_id) for k, v in nodo.items()}
+    if isinstance(nodo, list):
+        return [_sustituir_marcadores(v, mensaje, session_id) for v in nodo]
+    if isinstance(nodo, str):
+        return nodo.replace(MARCADOR_MENSAJE, mensaje).replace(MARCADOR_SESSION, session_id)
+    return nodo
 
 
 class N8nAdapter:
@@ -23,12 +49,14 @@ class N8nAdapter:
         timeout_s: float = 30.0,
         input_fields: Optional[List[str]] = None,
         agent_name: str = "",
+        payload_template: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.webhook_url = webhook_url
         self.auth_headers = auth_headers or {}
         self.timeout_s = timeout_s
         self.input_fields = _dedupe_fields(input_fields or [])
         self.agent_name = agent_name
+        self.payload_template = payload_template
         self.session_id = f"juez-{uuid.uuid4().hex[:12]}"
         self.last_debug: Dict[str, Any] = {}
 
@@ -38,7 +66,10 @@ class N8nAdapter:
         Retorna (agent_response, latency_ms).
         """
         recent_history = history[-6:] if len(history) > 6 else history
-        payload = self._build_payload(message, recent_history)
+        if self.payload_template:
+            payload = _sustituir_marcadores(copy.deepcopy(self.payload_template), message, self.session_id)
+        else:
+            payload = self._build_payload(message, recent_history)
         params = {
             "message": message,
             "chatInput": message,

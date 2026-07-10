@@ -143,11 +143,36 @@ def _parse_delimited(filename: str, content: bytes, ext: str) -> ReferenceDatase
     )
 
 
+_MARCADOR_PAYLOAD_TEMPLATE = "{{JUEZ_MENSAJE}}"
+
+
+def _contiene_marcador(nodo: object) -> bool:
+    """Busqueda recursiva del marcador de payload_template en cualquier
+    profundidad -- confirma que el usuario preparo este JSON a proposito
+    como ejemplo real de webhook, no una coincidencia de contenido."""
+    if isinstance(nodo, str):
+        return _MARCADOR_PAYLOAD_TEMPLATE in nodo
+    if isinstance(nodo, dict):
+        return any(_contiene_marcador(v) for v in nodo.values())
+    if isinstance(nodo, list):
+        return any(_contiene_marcador(v) for v in nodo)
+    return False
+
+
 def _parse_json(filename: str, content: bytes) -> ReferenceDataset:
     try:
         data = json.loads(_decode(content))
     except json.JSONDecodeError as exc:
         raise ParseError(f"JSON inválido: {exc}") from exc
+
+    if isinstance(data, dict) and _contiene_marcador(data):
+        return ReferenceDataset(
+            source_name=filename, format="json", payload_template=data,
+            notas=[
+                f"Detectado como payload_template (contiene el marcador {_MARCADOR_PAYLOAD_TEMPLATE}): "
+                "se usara tal cual para disparar el webhook en las conversaciones de prueba."
+            ],
+        )
 
     notas: List[str] = []
     records: List[ReferenceRecord] = []

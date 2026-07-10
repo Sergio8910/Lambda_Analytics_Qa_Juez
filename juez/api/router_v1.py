@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from juez.api.jobs import get_store
+from juez.api.reference_store import get_reference_store
 from juez.api.runner import run_elevenlabs_single, run_n8n_single, run_pipeline, run_proyecto
 from juez.api.schemas_v1 import (
     EvalElevenLabsRequest,
@@ -193,6 +194,7 @@ def evaluate_n8n(req: EvalN8nRequest) -> Dict[str, Any]:
         concurrencia=req.concurrencia,
         escenarios=req.escenarios,
         modo_ejecucion=req.modo_ejecucion,
+        reference_dataset_id=req.reference_dataset_id,
         openai_key=req.openai_key or "",
         n8n_api_key=req.n8n_api_key or "",
         n8n_base_url=req.n8n_base_url or "",
@@ -233,6 +235,7 @@ def evaluate_pipeline(req: EvalPipelineRequest) -> Dict[str, Any]:
         concurrencia=req.concurrencia,
         escenarios=req.escenarios,
         modo_ejecucion=req.modo_ejecucion,
+        reference_dataset_id=req.reference_dataset_id,
         openai_key=req.openai_key or "",
         elevenlabs_key=req.elevenlabs_key or "",
         n8n_api_key=req.n8n_api_key or "",
@@ -280,6 +283,9 @@ def evaluate_proyecto(req: EvalProyectoRequest) -> Dict[str, Any]:
         incluir_conversaciones=req.incluir_conversaciones,
         incluir_dinamicas=req.incluir_dinamicas,
         modo_ejecucion=req.modo_ejecucion,
+        reglas_negocio=req.reglas_negocio,
+        objetivos=req.objetivos,
+        reference_dataset_id=req.reference_dataset_id,
         openai_key=req.openai_key or "",
         elevenlabs_key=req.elevenlabs_key or "",
         n8n_api_key=req.n8n_api_key or "",
@@ -358,6 +364,57 @@ def verify_objectives_endpoint(req: VerifyObjectivesRequest) -> Dict[str, Any]:
     objectives = [Objective(**o.model_dump()) for o in req.objectives]
     report = verify_objectives(workflow, objectives)
     return report.model_dump(mode="json")
+
+
+# =============================================================================
+# DATOS DE REFERENCIA — subir una vez, reusar en muchas corridas/monitores
+# =============================================================================
+
+
+@router.post("/reference-data/ingest", tags=["juez-v1"])
+def ingest_reference_data(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """Sube y persiste un dataset de referencia (información real para pruebas).
+
+    Formatos: .xlsx, .csv, .tsv, .json, .txt, .docx. A diferencia del endpoint
+    legacy, este SÍ persiste el resultado y devuelve un `id` reusable en
+    `EvalProyectoRequest.reference_dataset_id` para futuras corridas/monitores.
+
+    JSON especial: si el archivo es un único objeto JSON que contiene el
+    marcador `{{JUEZ_MENSAJE}}`, se guarda como `payload_template` — un
+    ejemplo REAL del sobre que espera el webhook (ej. WhatsApp Business API),
+    para que las conversaciones de prueba lo disparen con la forma correcta
+    en vez de un payload genérico que el flujo no reconoce.
+    """
+    from juez.evaluation.reference_data.parser import ParseError, parse_reference_file
+
+    raw = file.file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Archivo vacío.")
+    try:
+        dataset = parse_reference_file(file.filename or "archivo", raw)
+    except ParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {exc}") from exc
+
+    entry = get_reference_store().save(dataset)
+    return {"id": entry["id"], "created_at": entry["created_at"], "resumen": dataset.resumen()}
+
+
+@router.get("/reference-data/{dataset_id}", tags=["juez-v1"])
+def get_reference_data(dataset_id: str) -> Dict[str, Any]:
+    """Consulta un dataset de referencia previamente ingerido por su id."""
+    entry = get_reference_store().get_entry(dataset_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Dataset no encontrado: {dataset_id}")
+    return entry
+
+
+@router.get("/reference-data", tags=["juez-v1"])
+def list_reference_data(limit: int = Query(50, ge=1, le=200)) -> Dict[str, Any]:
+    """Lista los datasets de referencia más recientes (para elegir por id)."""
+    items = get_reference_store().list(limit=limit)
+    return {"items": items, "total": len(items)}
 
 
 # =============================================================================

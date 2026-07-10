@@ -293,7 +293,9 @@ def _revisar_antes_de_pruebas(analisis: Dict, nombre: str, openai_key: str) -> D
 
 # ── Evaluación dinámica a partir de análisis ya hecho ─────────────────────────
 
-def _verificar_webhook_activo(webhook_url: str, timeout: float = 6.0) -> Tuple[bool, str]:
+def _verificar_webhook_activo(
+    webhook_url: str, timeout: float = 6.0, payload_template: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, str]:
     """Envía una probe POST al webhook para detectar si el flujo está activo en n8n.
 
     Returns (activo, mensaje_diagnostico).
@@ -301,16 +303,26 @@ def _verificar_webhook_activo(webhook_url: str, timeout: float = 6.0) -> Tuple[b
     - activo=False → el flujo está inactivo, no vale la pena correr pruebas.
 
     La probe es idéntica a lo que enviaría el contra-agente, así que no es invasiva.
+    Si `payload_template` esta disponible (un ejemplo real del sobre que el
+    flujo espera, ej. WhatsApp Business API), se usa ese en vez de un mensaje
+    generico -- evita falsos "inactivo" en flujos que rechazan/ignoran un
+    payload plano que no coincide con su forma real.
     """
     try:
         import requests as _req
     except ImportError:
         return True, ""  # Sin requests: asumir activo y dejar que falle después
 
+    if payload_template:
+        from juez.evaluation.contra_agente.adapters.n8n import _sustituir_marcadores
+        probe_payload = _sustituir_marcadores(payload_template, "verificacion", "_juez_probe")
+    else:
+        probe_payload = {"message": "verificacion", "sessionId": "_juez_probe"}
+
     try:
         resp = _req.post(
             webhook_url,
-            json={"message": "verificacion", "sessionId": "_juez_probe"},
+            json=probe_payload,
             headers={"Content-Type": "application/json"},
             timeout=timeout,
             allow_redirects=True,
@@ -358,6 +370,8 @@ def _evaluar_con_analisis(
     total_conv: int,
     concurrencia: int,
     modo_ejecucion: str = "real",
+    escenarios_extra: Optional[List[str]] = None,
+    payload_template: Optional[Dict[str, Any]] = None,
 ) -> NodeResult:
     """Recibe un preview con analisis ya hecho (y opcionalmente ajustado por el usuario)
     y solo corre la parte dinámica (contra-agente). Retorna NodeResult completo."""
@@ -388,7 +402,8 @@ def _evaluar_con_analisis(
             from juez.evaluation.contra_agente.adapters.elevenlabs import ElevenLabsAdapter
 
             batch = _gen(analisis=analisis, agent_name=nombre, total=total_conv,
-                         concurrency=concurrencia, adapter="elevenlabs", openai_key=openai_key)
+                         concurrency=concurrencia, adapter="elevenlabs", openai_key=openai_key,
+                         escenarios_extra=escenarios_extra or [])
             def _af(_t, _id):
                 return ElevenLabsAdapter(
                     agent_id=_id or agent_id,
@@ -420,11 +435,12 @@ def _evaluar_con_analisis(
             batch_result, reporte_ca = _mod.ejecutar_contra_agente(
                 analisis_n8n=analisis, webhook_url=webhook,
                 agent_name=nombre, total_conv=total_conv, concurrencia=concurrencia,
-                modo_ejecucion="sandbox",
+                modo_ejecucion="sandbox", escenarios_extra=escenarios_extra or [],
+                payload_template=payload_template,
             )
         elif HAS_CA and total_conv > 0 and webhook:
             # T-14: Verificar si el webhook está activo antes de gastar llamadas GPT
-            _wh_activo, _wh_msg = _verificar_webhook_activo(webhook)
+            _wh_activo, _wh_msg = _verificar_webhook_activo(webhook, payload_template=payload_template)
             if not _wh_activo:
                 SEP80 = "=" * 80
                 reporte_ca = "\n".join([
@@ -455,7 +471,8 @@ def _evaluar_con_analisis(
                 batch_result, reporte_ca = _mod.ejecutar_contra_agente(
                     analisis_n8n=analisis, webhook_url=webhook,
                     agent_name=nombre, total_conv=total_conv, concurrencia=concurrencia,
-                    modo_ejecucion="real",
+                    modo_ejecucion="real", escenarios_extra=escenarios_extra or [],
+                    payload_template=payload_template,
                 )
         elif HAS_CA and total_conv > 0 and not webhook:
             # No hay webhook — generar sección explicativa usando info del trigger

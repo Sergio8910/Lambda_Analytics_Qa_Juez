@@ -12,7 +12,10 @@ from __future__ import annotations
 import importlib.util as _ilu
 import json
 import os
+import re
+import shutil
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -871,13 +874,20 @@ def run_n8n_single(
     artifact_agent_id: str = "",
     modo_qa: str = "ambos",
     modo_ejecucion: str = "sandbox",
+    reference_dataset_id: Optional[str] = None,
     progress_cb: Optional[Callable[[str, int], None]] = None,
 ) -> Dict[str, Any]:
     """EvalÃºa un Ãºnico flujo n8n.
 
     `flow` es un dict tipo `N8nFlowSource`: {url, workflow_id, json_content, webhook_url}.
+
+    `reference_dataset_id`: id de un dataset subido via POST /reference-data/ingest.
+    Si contiene un `payload_template` (ejemplo real del sobre que espera el
+    webhook, ej. WhatsApp Business API), se usa para disparar las
+    conversaciones de prueba con la forma real que el flujo necesita.
     """
     progress = progress_cb or _progress_noop
+    payload_template = _resolver_payload_template(reference_dataset_id)
     previo_env = _setear_env_temporal(
         openai_key=openai_key, n8n_api_key=n8n_api_key, n8n_base_url=n8n_base_url
     )
@@ -923,13 +933,14 @@ def run_n8n_single(
                         concurrencia=concurrencia,
                         escenarios_extra=escenarios or [],
                         modo_ejecucion="sandbox",
+                        payload_template=payload_template,
                     )
                     webhook_activo_msg = "sandbox: webhook no invocado"
                 except Exception as exc:
                     reporte_ca = f"\n[CONTRA-AGENTE - Error: {exc}]\n"
             else:
                 pipeline_mod = _load_module("evaluar_pipeline")
-                activo, msg = pipeline_mod._verificar_webhook_activo(webhook_url)
+                activo, msg = pipeline_mod._verificar_webhook_activo(webhook_url, payload_template=payload_template)
                 webhook_activo_msg = msg
 
                 if activo:
@@ -943,6 +954,7 @@ def run_n8n_single(
                             concurrencia=concurrencia,
                             escenarios_extra=escenarios or [],
                             modo_ejecucion="real",
+                            payload_template=payload_template,
                         )
                     except Exception as exc:
                         reporte_ca = f"\n[CONTRA-AGENTE - Error: {exc}]\n"
@@ -1062,6 +1074,7 @@ def run_pipeline(
     concurrencia: int = 3,
     escenarios: Optional[List[str]] = None,
     modo_ejecucion: str = "real",
+    reference_dataset_id: Optional[str] = None,
     openai_key: str = "",
     elevenlabs_key: str = "",
     n8n_api_key: str = "",
@@ -1071,7 +1084,12 @@ def run_pipeline(
     """EvalÃºa un pipeline completo: 0..N agentes ElevenLabs + 0..M flujos n8n.
 
     Replica la lÃ³gica de `evaluar_pipeline.py main()` sin el menÃº interactivo.
+
+    `reference_dataset_id`: ver run_n8n_single -- si el dataset trae
+    payload_template, se usa para disparar cada flujo n8n del pipeline con
+    la forma real que espera (ej. WhatsApp Business API).
     """
+    payload_template = _resolver_payload_template(reference_dataset_id)
     progress = progress_cb or _progress_noop
     eleven_ids = eleven_ids or []
     n8n_flows = n8n_flows or []
@@ -1162,7 +1180,9 @@ def run_pipeline(
             progress(f"Probando {pv['nombre']} ({i + 1}/{len(previews)})", pct)
             try:
                 result = pipeline_mod._evaluar_con_analisis(
-                    pv, oai_key, total_conversaciones, concurrencia, modo_ejecucion=modo_ejecucion
+                    pv, oai_key, total_conversaciones, concurrencia,
+                    modo_ejecucion=modo_ejecucion, escenarios_extra=escenarios,
+                    payload_template=payload_template if pv["tipo"] == "n8n" else None,
                 )
                 node_results.append(result)
             except Exception as exc:
@@ -1362,6 +1382,110 @@ def run_pipeline(
         _restaurar_env(previo_env)
 
 
+def _escenarios_desde_registros(reference_dataset_id: Optional[str], maximo: int = 3) -> List[str]:
+    """Convierte hasta `maximo` records reales de un dataset de referencia en
+    escenarios descriptivos (texto libre) para que el generador de
+    conversaciones use datos REALES en vez de inventados. No lanza."""
+    if not reference_dataset_id:
+        return []
+    try:
+        from juez.api.reference_store import get_reference_store
+        dataset = get_reference_store().get(reference_dataset_id)
+    except Exception:
+        return []
+    if not dataset or not dataset.records:
+        return []
+    escenarios: List[str] = []
+    for rec in dataset.records[:maximo]:
+        partes = ", ".join(f"{k}: {v}" for k, v in rec.items() if v not in (None, ""))
+        if partes:
+            escenarios.append(f"Usa este caso real como base para una conversacion: {partes}")
+    return escenarios
+
+
+def _resolver_payload_template(reference_dataset_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Resuelve un reference_dataset_id a su payload_template (si tiene uno).
+
+    Nunca lanza: un id invalido o un dataset sin payload_template simplemente
+    deja las pruebas en el comportamiento generico de siempre."""
+    if not reference_dataset_id:
+        return None
+    try:
+        from juez.api.reference_store import get_reference_store
+        dataset = get_reference_store().get(reference_dataset_id)
+        return dataset.payload_template if dataset else None
+    except Exception:
+        return None
+
+
+def _slug_archivo(nombre: str, fallback: str = "flujo") -> str:
+    limpio = re.sub(r"[^\w\-]", "_", (nombre or "").strip())[:60]
+    return limpio or fallback
+
+
+def _construir_proyecto_temporal(
+    prompt: str,
+    componentes_n8n: List[tuple],
+    reglas_negocio: Optional[List[str]],
+    objetivos_por_flujo: Optional[Dict[str, List[Dict[str, Any]]]],
+) -> Path:
+    """Materializa prompt + flujos n8n + reglas/objetivos en una carpeta
+    temporal, para reusar evaluate_project_path (capa MODERNA de Colmena:
+    workers.py, business_rules.py, objectives.py, purpose_check) en vez de
+    la capa legacy (run_colmena directo), que no conoce nada de esto.
+    """
+    root = Path(tempfile.mkdtemp(prefix="juez_proyecto_"))
+    if prompt.strip():
+        (root / "agente_prompt.txt").write_text(
+            f"System prompt del agente (instrucciones):\n{prompt}", encoding="utf-8"
+        )
+    for wf_nombre, wf in componentes_n8n:
+        archivo = f"{_slug_archivo(wf_nombre)}.json"
+        (root / archivo).write_text(json.dumps(wf, ensure_ascii=False), encoding="utf-8")
+    if reglas_negocio:
+        reglas_json = {
+            "reglas": [
+                {"id": f"RN-API-{i + 1:03d}", "descripcion": r}
+                for i, r in enumerate(reglas_negocio) if r and r.strip()
+            ]
+        }
+        (root / "reglas_negocio.json").write_text(json.dumps(reglas_json, ensure_ascii=False), encoding="utf-8")
+    if objetivos_por_flujo:
+        (root / "objetivos_flujos.json").write_text(json.dumps(objetivos_por_flujo, ensure_ascii=False), encoding="utf-8")
+    return root
+
+
+class _ColmenaLegacyView:
+    """Adapta un ProjectEvaluationReport (capa moderna) al shape que
+    `consolidar_proyecto()` ya sabe leer (.hallazgos como lista de dicts,
+    .score como float, .model_dump() para el 'detalle' de trazabilidad) --
+    para reusar esa consolidacion sin duplicarla ni tocar mejoras.py."""
+
+    def __init__(self, report: Any) -> None:
+        self.hallazgos = [
+            {
+                "obrera": f.source or f.category,
+                "severidad": f.severity,
+                "descripcion": f"[{report.project_id}] {f.title}: {f.description}",
+                "ubicacion": f.file or "",
+                "accion": f.recommendation or "",
+            }
+            for f in report.findings
+        ]
+        self.score = report.score.score
+        self._report = report
+
+    def model_dump(self, mode: str = "python") -> Dict[str, Any]:
+        try:
+            return self._report.model_dump(mode=mode)
+        except AttributeError:
+            return {"hallazgos": self.hallazgos, "score": self.score}
+
+
+def _project_report_a_colmena_legacy(report) -> Any:
+    return _ColmenaLegacyView(report)
+
+
 def run_proyecto(
     nombre: str = "Proyecto",
     prompt: str = "",
@@ -1373,6 +1497,9 @@ def run_proyecto(
     incluir_conversaciones: bool = True,
     incluir_dinamicas: bool = False,
     modo_ejecucion: str = "sandbox",
+    reglas_negocio: Optional[List[str]] = None,
+    objetivos: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    reference_dataset_id: Optional[str] = None,
     openai_key: str = "",
     elevenlabs_key: str = "",
     n8n_api_key: str = "",
@@ -1384,10 +1511,12 @@ def run_proyecto(
     Corre dos motores y los consolida en un solo JSON estable (ver
     `juez.colmena.mejoras.consolidar_proyecto`):
 
-      1) La Colmena (`run_colmena`): anÃ¡lisis de construcciÃ³n del proyecto
-         (seguridad de tools, flujos, objetivos, calidad del prompt; + obreras
-         dinÃ¡micas opt-in). Barato y determinista en su parte estÃ¡tica.
-      2) Conversaciones (`run_pipeline`): simulaciÃ³n contra el/los agente(s).
+      1) La Colmena MODERNA (`evaluate_project_path`): analisis de
+         construccion (seguridad, flujos, arquitectura, calidad del prompt,
+         REGLAS DE NEGOCIO explicitas via `reglas_negocio`, OBJETIVOS
+         declarados via `objetivos`, + obreras dinamicas opt-in: adversarial/
+         edge/proposito). Barato y determinista en su parte estatica.
+      2) Conversaciones (`run_pipeline`): simulacion contra el/los agente(s).
          Opcional (caro / tarda) â€” se corre solo si `incluir_conversaciones`.
 
     Devuelve `score`, `estado`, `problemas[]` y `mejoras[]`, donde la mejora del
@@ -1410,33 +1539,39 @@ def run_proyecto(
         n8n_base_url=n8n_base_url,
     )
     try:
-        from juez.colmena.colmena import Componente, run_colmena
         from juez.colmena.mejoras import consolidar_proyecto
+        from juez.colmena.project_evaluator import evaluate_project_path
 
         # â”€â”€ 1) Componentes para La Colmena â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         progress("Preparando componentes del proyecto", 5)
-        componentes: List[Any] = []
-        if prompt:
-            componentes.append(Componente(kind="prompt", nombre=nombre or "agente", prompt=prompt))
+        componentes_n8n: List[tuple] = []
         for flow in n8n_flows:
             try:
                 wf, _webhook, wf_nombre = _resolve_n8n_flow(flow, n8n_api_key, n8n_base_url)
-                componentes.append(Componente(kind="n8n", nombre=wf_nombre, workflow_json=wf))
+                componentes_n8n.append((wf_nombre, wf))
             except Exception:
                 # Un flujo no resoluble no bloquea la evaluaciÃ³n; La Colmena
                 # simplemente no lo analiza. La conversaciÃ³n reportarÃ¡ su fallo.
                 pass
 
-        # â”€â”€ 2) La Colmena (construcciÃ³n) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # â”€â”€ 2) La Colmena (construcciÃ³n, capa MODERNA) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         colmena = None
-        if componentes:
+        if prompt or componentes_n8n:
             progress("Analizando la construcciÃ³n del proyecto", 25)
-            colmena = run_colmena(nombre or "proyecto", componentes, incluir_dinamicas=incluir_dinamicas)
+            root_tmp = _construir_proyecto_temporal(prompt, componentes_n8n, reglas_negocio, objetivos)
+            try:
+                project_report = evaluate_project_path(
+                    root_tmp, project_id=nombre or "proyecto", incluir_dinamicas=incluir_dinamicas,
+                )
+                colmena = _project_report_a_colmena_legacy(project_report)
+            finally:
+                shutil.rmtree(root_tmp, ignore_errors=True)
 
         # â”€â”€ 3) Conversaciones (opcional, caro) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         conversacion: Optional[Dict[str, Any]] = None
         if incluir_conversaciones and (eleven_ids or n8n_flows):
             progress("Probando el agente con conversaciones", 45)
+            escenarios_enriquecidos = list(escenarios or []) + _escenarios_desde_registros(reference_dataset_id)
             try:
                 conversacion = run_pipeline(
                     nombre=nombre,
@@ -1444,8 +1579,9 @@ def run_proyecto(
                     n8n_flows=n8n_flows,
                     total_conversaciones=total_conversaciones,
                     concurrencia=concurrencia,
-                    escenarios=escenarios,
+                    escenarios=escenarios_enriquecidos,
                     modo_ejecucion=modo_ejecucion,
+                    reference_dataset_id=reference_dataset_id,
                     openai_key=openai_key,
                     elevenlabs_key=elevenlabs_key,
                     n8n_api_key=n8n_api_key,

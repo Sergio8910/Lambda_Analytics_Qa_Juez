@@ -51,6 +51,33 @@ def test_parse_json_invalido_lanza():
         parse_reference_file("x.json", b"{no es json")
 
 
+# ------------------------------------------------------------- payload_template
+def test_parse_json_con_marcador_se_detecta_como_payload_template():
+    """Un JSON que contiene {{JUEZ_MENSAJE}} en algun valor anidado se guarda
+    como payload_template -- ejemplo real de un webhook (ej. WhatsApp
+    Business API) en vez de records tabulares."""
+    payload_whatsapp = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "changes": [{
+                "value": {
+                    "messages": [{"from": "573001234567", "text": {"body": "{{JUEZ_MENSAJE}}"}}]
+                }
+            }]
+        }],
+    }
+    ds = parse_reference_file("whatsapp_ejemplo.json", json.dumps(payload_whatsapp).encode())
+    assert ds.payload_template is not None
+    assert ds.payload_template["entry"][0]["changes"][0]["value"]["messages"][0]["text"]["body"] == "{{JUEZ_MENSAJE}}"
+    assert ds.n_records == 0
+
+
+def test_parse_json_sin_marcador_no_es_payload_template():
+    ds = parse_reference_file("normal.json", json.dumps({"cliente": "Juan", "pedido": "REF-123"}).encode())
+    assert ds.payload_template is None
+    assert ds.n_records == 1
+
+
 # --------------------------------------------------------------------------- TXT
 def test_parse_txt():
     ds = parse_reference_file("notas.txt", "línea uno\nlínea dos".encode("utf-8"))
