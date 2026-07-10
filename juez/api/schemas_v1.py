@@ -221,6 +221,59 @@ class EvalProyectoRequest(BaseModel):
 
 
 # =============================================================================
+# SELF-HEAL — propone Y VERIFICA fixes reales (antes/despues) sin tocar nada real
+# =============================================================================
+
+
+class SelfHealRequest(BaseModel):
+    """Corre el self-heal autonomo de La Colmena sobre el proyecto: propone
+    fixes concretos (empieza por el prompt; flujos n8n vía el fixer genérico),
+    los aplica en un directorio TEMPORAL efímero, re-evalúa, y solo se queda
+    con los que mejoran el score sin agregar críticos (si no, rollback). Nunca
+    toca un repo real -- opera sobre la misma reconstrucción temporal que usa
+    /evaluate/proyecto, así que no hay riesgo de escribir en infraestructura
+    real del cliente.
+    """
+
+    nombre: str = Field("Proyecto", description="Nombre del proyecto para el reporte")
+    prompt: str = Field("", description="System prompt actual del agente")
+    n8n_flows: List[N8nFlowSource] = Field(default_factory=list, description="Flujos n8n del proyecto")
+    reglas_negocio: List[str] = Field(default_factory=list, description="Reglas de negocio explícitas")
+    objetivos: Optional[Dict[str, List[Dict[str, Any]]]] = Field(None, description="Objetivos declarados por flujo n8n")
+    min_confidence: float = Field(0.85, ge=0.0, le=1.0, description="Confianza mínima para aplicar un fix sin revisión")
+    max_iterations: int = Field(3, ge=1, le=10, description="Máximo de hallazgos a intentar arreglar")
+    max_lines_per_fix: int = Field(40, ge=1, le=500, description="Máximo de líneas que un fix puede cambiar")
+    enable_generic_fixer: bool = Field(
+        False,
+        description="Habilita el fixer genérico (LLM en sandbox) para hallazgos sin fixer fijo. Más caro/lento.",
+    )
+    openai_key: Optional[str] = None
+    n8n_api_key: Optional[str] = None
+    n8n_base_url: Optional[str] = None
+
+
+class SelfHealPropuesta(BaseModel):
+    archivo: str
+    antes: str
+    despues: str
+    aplicable: bool = True
+
+
+class SelfHealResponse(BaseModel):
+    kind: Literal["self_heal"] = "self_heal"
+    nombre: str
+    score_inicial: Optional[float] = None
+    score_final: Optional[float] = None
+    readiness_inicial: Optional[str] = None
+    readiness_final: Optional[str] = None
+    propuestas: List[SelfHealPropuesta] = Field(default_factory=list)
+    resumen: Dict[str, int] = Field(default_factory=dict)
+    requiere_revision_manual: List[Dict[str, Any]] = Field(default_factory=list)
+    iteraciones: List[Dict[str, Any]] = Field(default_factory=list)
+    nota: str = ""
+
+
+# =============================================================================
 # MONITOREO PROGRAMADO — evaluaciones recurrentes con historial
 # =============================================================================
 
@@ -293,7 +346,7 @@ class MonitorUpdateRequest(BaseModel):
 
 
 JobStatus = Literal["queued", "running", "completed", "failed"]
-JobKind = Literal["elevenlabs", "n8n", "pipeline", "proyecto", "failure"]
+JobKind = Literal["elevenlabs", "n8n", "pipeline", "proyecto", "failure", "self_heal"]
 
 
 class JobCreatedResponse(BaseModel):

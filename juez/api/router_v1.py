@@ -12,7 +12,13 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from juez.api.jobs import get_store
 from juez.api.monitor_store import get_monitor_store
 from juez.api.reference_store import get_reference_store
-from juez.api.runner import run_elevenlabs_single, run_n8n_single, run_pipeline, run_proyecto
+from juez.api.runner import (
+    run_elevenlabs_single,
+    run_n8n_single,
+    run_pipeline,
+    run_proyecto,
+    run_proyecto_self_heal,
+)
 from juez.api.schemas_v1 import (
     EvalElevenLabsRequest,
     EvalN8nRequest,
@@ -30,6 +36,7 @@ from juez.api.schemas_v1 import (
     MonitorResponse,
     MonitorUpdateRequest,
     N8nFailurePayload,
+    SelfHealRequest,
     VerifyObjectivesRequest,
 )
 
@@ -301,6 +308,56 @@ def evaluate_proyecto(req: EvalProyectoRequest) -> Dict[str, Any]:
     return {
         "job_id": job_id,
         "kind": "proyecto",
+        "status": "queued",
+        "created_at": job["created_at"],
+        "poll_url": f"/api/v1/evaluate/{job_id}",
+    }
+
+
+@router.post("/proyecto/self-heal", response_model=JobCreatedResponse, status_code=202)
+def self_heal_proyecto(req: SelfHealRequest) -> Dict[str, Any]:
+    """Propone Y VERIFICA fixes reales del proyecto (antes/después), sin tocar
+    nada real: corre el self-heal autónomo de La Colmena sobre la MISMA
+    reconstrucción temporal efímera que usa /evaluate/proyecto (nunca un repo
+    real), aplica cada fix candidato, re-evalúa, y solo se queda con los que
+    mejoran el score sin agregar críticos (si no, rollback automático).
+
+    A diferencia de la mejora de prompt de /evaluate/proyecto (una reescritura
+    con LLM), este motor itera hallazgo por hallazgo con fixers deterministas
+    + fixer genérico opcional, y verifica cada cambio re-evaluando el proyecto
+    antes de aceptarlo. El resultado trae `propuestas[]` (antes/después real
+    por archivo) para que un humano en Gamma decida aplicarlas al agente real.
+    """
+    if not req.prompt.strip() and not req.n8n_flows:
+        raise HTTPException(
+            status_code=400,
+            detail="El self-heal necesita al menos 'prompt' o 'n8n_flows'.",
+        )
+
+    store = get_store()
+    job = store.create(kind="self_heal", params=req.model_dump(mode="json"))
+    job_id = job["job_id"]
+
+    store.run_in_thread(
+        job_id,
+        run_proyecto_self_heal,
+        nombre=req.nombre,
+        prompt=req.prompt,
+        n8n_flows=[f.model_dump(mode="json") for f in req.n8n_flows],
+        reglas_negocio=req.reglas_negocio,
+        objetivos=req.objetivos,
+        min_confidence=req.min_confidence,
+        max_iterations=req.max_iterations,
+        max_lines_per_fix=req.max_lines_per_fix,
+        enable_generic_fixer=req.enable_generic_fixer,
+        openai_key=req.openai_key or "",
+        n8n_api_key=req.n8n_api_key or "",
+        n8n_base_url=req.n8n_base_url or "",
+    )
+
+    return {
+        "job_id": job_id,
+        "kind": "self_heal",
         "status": "queued",
         "created_at": job["created_at"],
         "poll_url": f"/api/v1/evaluate/{job_id}",

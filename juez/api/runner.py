@@ -1605,3 +1605,120 @@ def run_proyecto(
         return contrato
     finally:
         _restaurar_env(previo_env)
+
+
+# =============================================================================
+# SELF-HEAL — propone Y VERIFICA fixes reales sobre el proyecto (antes/despues)
+# =============================================================================
+
+
+_ARCHIVOS_NO_CANDIDATOS_SELF_HEAL = {"reglas_negocio.json", "objetivos_flujos.json"}
+
+
+def run_proyecto_self_heal(
+    nombre: str = "Proyecto",
+    prompt: str = "",
+    n8n_flows: Optional[List[Dict[str, Any]]] = None,
+    reglas_negocio: Optional[List[str]] = None,
+    objetivos: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    min_confidence: float = 0.85,
+    max_iterations: int = 3,
+    max_lines_per_fix: int = 40,
+    enable_generic_fixer: bool = False,
+    openai_key: str = "",
+    n8n_api_key: str = "",
+    n8n_base_url: str = "",
+    progress_cb: Optional[Callable[[str, int], None]] = None,
+) -> Dict[str, Any]:
+    """Corre el self-heal autonomo de La Colmena (`juez.colmena.self_heal_agent.
+    run_self_heal`) sobre el MISMO proyecto temporal efimero que arma
+    `run_proyecto` (prompt + flujos n8n materializados en una carpeta temporal
+    descartable) -- nunca sobre un repo real. Por eso el gate humano de
+    self-heal (que es autonomo, sin pausa para aprobacion) es seguro aqui: lo
+    unico que puede tocar es ese directorio temporal, que se borra al salir.
+
+    Devuelve antes/despues REAL por archivo (prompt y/o flujos n8n) que
+    self-heal dejo aplicado (`kept`), listo para que Gamma lo muestre igual
+    que `mejoras[]` de `consolidar_proyecto` -- pero producido por un motor
+    que itera, re-evalua y revierte solo, no solo reescribe el prompt.
+    """
+    from juez.colmena.self_heal_agent import run_self_heal
+
+    n8n_flows = n8n_flows or []
+    prompt = (prompt or "").strip()
+    if not prompt and not n8n_flows:
+        raise ValueError("El self-heal necesita al menos un 'prompt' o un flujo n8n.")
+
+    progress = progress_cb or _progress_noop
+    previo_env = _setear_env_temporal(openai_key=openai_key, n8n_api_key=n8n_api_key, n8n_base_url=n8n_base_url)
+    try:
+        progress("Preparando componentes del proyecto", 5)
+        componentes_n8n: List[tuple] = []
+        for flow in n8n_flows:
+            try:
+                wf, _webhook, wf_nombre = _resolve_n8n_flow(flow, n8n_api_key, n8n_base_url)
+                componentes_n8n.append((wf_nombre, wf))
+            except Exception:
+                pass
+
+        root_tmp = _construir_proyecto_temporal(prompt, componentes_n8n, reglas_negocio, objetivos)
+        try:
+            antes: Dict[str, str] = {
+                p.name: p.read_text(encoding="utf-8")
+                for p in root_tmp.iterdir()
+                if p.is_file() and p.name not in _ARCHIVOS_NO_CANDIDATOS_SELF_HEAL
+            }
+
+            progress("Corriendo self-heal (proponer y verificar)", 30)
+            resultado = run_self_heal(
+                root_tmp,
+                min_confidence=min_confidence,
+                max_iterations=max_iterations,
+                max_lines_per_fix=max_lines_per_fix,
+                output_dir=root_tmp / "_selfheal_output",
+                enable_generic_fixer=enable_generic_fixer,
+            )
+
+            progress("Comparando antes/despues", 90)
+            propuestas: List[Dict[str, Any]] = []
+            for archivo, texto_antes in antes.items():
+                ruta = root_tmp / archivo
+                texto_despues = ruta.read_text(encoding="utf-8") if ruta.is_file() else texto_antes
+                if texto_despues != texto_antes:
+                    propuestas.append({
+                        "archivo": archivo,
+                        "antes": texto_antes,
+                        "despues": texto_despues,
+                        "aplicable": True,
+                    })
+
+            import dataclasses
+
+            progress("Listo", 100)
+            return {
+                "kind": "self_heal",
+                "nombre": nombre or "Proyecto",
+                "score_inicial": resultado.score_initial,
+                "score_final": resultado.score_final,
+                "readiness_inicial": resultado.readiness_initial,
+                "readiness_final": resultado.readiness_final,
+                "propuestas": propuestas,
+                "resumen": {
+                    "aplicados": resultado.kept_fixes,
+                    "revertidos": resultado.rolled_back_fixes,
+                    "bloqueados": resultado.blocked_findings,
+                    "fallidos": resultado.failed_fixes,
+                },
+                "requiere_revision_manual": resultado.human_review_required,
+                "iteraciones": [dataclasses.asdict(it) for it in resultado.iterations],
+                "nota": (
+                    "Corrido sobre un proyecto temporal efimero (no un repo real): "
+                    "las propuestas antes/despues son seguras de mostrar, pero aplicarlas "
+                    "de verdad al agente (prompt real / flujo n8n real) es una accion "
+                    "aparte que decide un humano en Gamma."
+                ),
+            }
+        finally:
+            shutil.rmtree(root_tmp, ignore_errors=True)
+    finally:
+        _restaurar_env(previo_env)
