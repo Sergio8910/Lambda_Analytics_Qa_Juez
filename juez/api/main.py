@@ -111,6 +111,20 @@ for _r in prompt_eval_router.routes:
         app.router.routes.append(_r)
 
 
+@app.on_event("startup")
+def _start_monitor_scheduler() -> None:
+    """Arranca el scheduler de monitores programados (thread en background,
+    revisa cada 30s qué monitores vencieron). No debe tumbar el arranque del
+    Juez si falla."""
+    try:
+        from juez.api.scheduler import start_scheduler
+
+        start_scheduler()
+        logger.info("Scheduler de monitores programados iniciado")
+    except Exception as exc:
+        logger.warning("No se pudo iniciar el scheduler de monitores: %s", exc)
+
+
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}

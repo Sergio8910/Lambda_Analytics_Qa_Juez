@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from juez.api.jobs import get_store
+from juez.api.monitor_store import get_monitor_store
 from juez.api.reference_store import get_reference_store
 from juez.api.runner import run_elevenlabs_single, run_n8n_single, run_pipeline, run_proyecto
 from juez.api.schemas_v1 import (
@@ -23,6 +24,11 @@ from juez.api.schemas_v1 import (
     JobCreatedResponse,
     JobListResponse,
     JobStatusResponse,
+    MonitorCreateRequest,
+    MonitorHistorialResponse,
+    MonitorListResponse,
+    MonitorResponse,
+    MonitorUpdateRequest,
     N8nFailurePayload,
     VerifyObjectivesRequest,
 )
@@ -415,6 +421,89 @@ def list_reference_data(limit: int = Query(50, ge=1, le=200)) -> Dict[str, Any]:
     """Lista los datasets de referencia más recientes (para elegir por id)."""
     items = get_reference_store().list(limit=limit)
     return {"items": items, "total": len(items)}
+
+
+# =============================================================================
+# MONITOREO PROGRAMADO — evaluaciones recurrentes con historial
+# =============================================================================
+
+
+@router.post("/monitors", response_model=MonitorResponse, status_code=201)
+def create_monitor(req: MonitorCreateRequest) -> Dict[str, Any]:
+    """Crea un monitor programado sobre un proyecto (prompt/agentes/reglas de
+    negocio/escenarios/datos de referencia, igual que /evaluate/proyecto) que
+    se ejecuta solo con la frecuencia indicada. Cada corrida corre la Colmena
+    moderna (evaluate_project_path) vía run_proyecto y queda en el historial
+    del monitor, con el delta de score contra la corrida anterior.
+    """
+    if not req.prompt.strip() and not req.eleven_ids and not req.n8n_flows:
+        raise HTTPException(
+            status_code=400,
+            detail="El monitor necesita al menos 'prompt', 'eleven_ids' o 'n8n_flows'.",
+        )
+    monitor = get_monitor_store().create(req.model_dump(mode="json"))
+    return monitor
+
+
+@router.get("/monitors", response_model=MonitorListResponse)
+def list_monitors(limit: int = Query(100, ge=1, le=500)) -> Dict[str, Any]:
+    """Lista los monitores programados, más recientes primero."""
+    items = get_monitor_store().list(limit=limit)
+    return {"monitors": items, "total": len(items)}
+
+
+@router.get("/monitors/{monitor_id}", response_model=MonitorResponse)
+def get_monitor(monitor_id: str) -> Dict[str, Any]:
+    """Consulta un monitor por id, incluyendo su historial completo."""
+    monitor = get_monitor_store().get(monitor_id)
+    if not monitor:
+        raise HTTPException(status_code=404, detail=f"Monitor no encontrado: {monitor_id}")
+    return monitor
+
+
+@router.patch("/monitors/{monitor_id}", response_model=MonitorResponse)
+def update_monitor(monitor_id: str, req: MonitorUpdateRequest) -> Dict[str, Any]:
+    """Pausa o reactiva un monitor (`active`). El scheduler ignora los monitores pausados."""
+    cambios = req.model_dump(exclude_none=True)
+    monitor = get_monitor_store().update(monitor_id, **cambios) if cambios else get_monitor_store().get(monitor_id)
+    if not monitor:
+        raise HTTPException(status_code=404, detail=f"Monitor no encontrado: {monitor_id}")
+    return monitor
+
+
+@router.delete("/monitors/{monitor_id}", status_code=204)
+def delete_monitor(monitor_id: str) -> None:
+    """Elimina un monitor y su historial."""
+    if not get_monitor_store().delete(monitor_id):
+        raise HTTPException(status_code=404, detail=f"Monitor no encontrado: {monitor_id}")
+
+
+@router.get("/monitors/{monitor_id}/historial", response_model=MonitorHistorialResponse)
+def get_monitor_historial(monitor_id: str, limit: int = Query(50, ge=1, le=200)) -> Dict[str, Any]:
+    """Historial de corridas de un monitor, más reciente primero."""
+    store = get_monitor_store()
+    if not store.get(monitor_id):
+        raise HTTPException(status_code=404, detail=f"Monitor no encontrado: {monitor_id}")
+    hist = store.historial(monitor_id, limit=limit)
+    return {"monitor_id": monitor_id, "historial": hist, "total": len(hist)}
+
+
+@router.post("/monitors/{monitor_id}/run-now", status_code=202)
+def run_monitor_now(monitor_id: str) -> Dict[str, Any]:
+    """Dispara una corrida inmediata del monitor, fuera de su horario
+    programado. Responde de inmediato; el resultado aparece en el historial
+    (GET /monitors/{id}/historial) cuando termine.
+    """
+    import threading
+
+    from juez.api.scheduler import ejecutar_monitor
+
+    store = get_monitor_store()
+    monitor = store.get(monitor_id)
+    if not monitor:
+        raise HTTPException(status_code=404, detail=f"Monitor no encontrado: {monitor_id}")
+    threading.Thread(target=ejecutar_monitor, args=(monitor,), daemon=True).start()
+    return {"monitor_id": monitor_id, "status": "queued", "historial_url": f"/api/v1/monitors/{monitor_id}/historial"}
 
 
 # =============================================================================

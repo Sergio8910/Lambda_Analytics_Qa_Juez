@@ -221,6 +221,73 @@ class EvalProyectoRequest(BaseModel):
 
 
 # =============================================================================
+# MONITOREO PROGRAMADO — evaluaciones recurrentes con historial
+# =============================================================================
+
+
+MonitorFrecuencia = Literal["once", "hourly", "daily", "weekly", "monthly"]
+
+
+class MonitorCreateRequest(EvalProyectoRequest):
+    """Config de un monitor programado: todo lo de un proyecto (prompt,
+    agentes, reglas de negocio, escenarios, datos de referencia) más cada
+    cuánto debe correr solo. Cada corrida queda en el historial del monitor,
+    con el delta de score contra la corrida anterior.
+    """
+
+    frecuencia: MonitorFrecuencia = Field(
+        "daily",
+        description="once = corre una sola vez; hourly = cada hora; daily/weekly/monthly = a una hora fija (hora Colombia).",
+    )
+    hora: Optional[str] = Field(
+        "08:00",
+        description="Hora HH:MM (hora Colombia, UTC-5) para daily/weekly/monthly. Ignorado en once/hourly.",
+    )
+
+
+class MonitorHistorialEntry(BaseModel):
+    run_id: str
+    timestamp: str
+    status: Literal["completed", "failed"]
+    score_anterior: Optional[float] = None
+    score: Optional[float] = None
+    cambio: Optional[float] = None
+    estado: Optional[str] = None
+    resultado: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class MonitorResponse(BaseModel):
+    id: str
+    created_at: str
+    updated_at: str
+    active: bool
+    config: Dict[str, Any]
+    last_run_at: Optional[str] = None
+    next_run_at: Optional[str] = None
+    historial: List[MonitorHistorialEntry] = Field(default_factory=list)
+
+
+class MonitorListResponse(BaseModel):
+    monitors: List[MonitorResponse]
+    total: int
+
+
+class MonitorHistorialResponse(BaseModel):
+    monitor_id: str
+    historial: List[MonitorHistorialEntry]
+    total: int
+
+
+class MonitorUpdateRequest(BaseModel):
+    """Actualización parcial: hoy solo pausar/reactivar (`active`)."""
+
+    active: Optional[bool] = Field(None, description="False pausa el monitor (deja de ejecutarse hasta reactivarlo)")
+
+    model_config = {"extra": "forbid"}
+
+
+# =============================================================================
 # RESPONSE MODELS
 # =============================================================================
 
