@@ -204,7 +204,10 @@ def _sev_rank(sev: str) -> int:
 
 
 def _classify_problem(p: Dict[str, Any]) -> str:
-    txt = " ".join(str(p.get(k, "")) for k in ("tipo", "descripcion", "nodo", "recomendacion")).lower()
+    txt = " ".join(
+        str(p.get(k, ""))
+        for k in ("titulo", "tipo", "descripcion", "ubicacion", "origen", "nodo", "componente", "recomendacion")
+    ).lower()
     if any(k in txt for k in ("seguridad", "auth", "token", "api key", "credential", "credencial", "secret", "ssrf", "inyeccion", "prompt injection")):
         return "seguridad"
     if any(k in txt for k in ("http", "webhook", "schema", "parser", "rag", "modelo", "timeout", "api", "nodo", "tool", "codigo", "javascript")):
@@ -215,9 +218,9 @@ def _classify_problem(p: Dict[str, Any]) -> str:
 def _problem_to_item(p: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "severidad": str(p.get("severidad") or "INFO"),
-        "titulo": str(p.get("tipo") or p.get("nodo") or "Hallazgo"),
+        "titulo": str(p.get("titulo") or p.get("tipo") or p.get("nodo") or "Hallazgo"),
         "detalle": str(p.get("descripcion") or p.get("detalle") or "")[:700],
-        "componente": str(p.get("nodo") or p.get("componente") or ""),
+        "componente": str(p.get("ubicacion") or p.get("nodo") or p.get("componente") or ""),
         "recomendacion": str(p.get("recomendacion") or p.get("accion") or "")[:500],
     }
 
@@ -265,6 +268,60 @@ def _batch_focus_summary(batch_result: Any) -> Dict[str, Any]:
     }
 
 
+def _aggregate_pruebas_summary(nodos: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    """Suma los `batch_summary` de los nodos de un pipeline/proyecto en un unico
+    resumen de pruebas dinamicas (total/aprobadas/fallidas/pass_rate + evidencia).
+
+    Necesario porque `run_proyecto`/`run_pipeline` NO tienen un `batch_result`
+    unico: cada nodo corrio su propio batch. Sin esto, el panel muestra 0 pruebas
+    aunque las conversaciones si se ejecutaron nodo a nodo.
+    """
+    total = aprobadas = fallidas = 0
+    ejecutadas = False
+    categorias: Dict[str, Any] = {}
+    fallos: List[Dict[str, Any]] = []
+    evidencia: List[Dict[str, Any]] = []
+    for n in nodos or []:
+        if not isinstance(n, dict):
+            continue
+        bs = n.get("batch_summary") or {}
+        if not isinstance(bs, dict):
+            continue
+        if bs.get("ejecutadas"):
+            ejecutadas = True
+        total += int(bs.get("total") or 0)
+        aprobadas += int(bs.get("aprobadas") or 0)
+        fallidas += int(bs.get("fallidas") or 0)
+        for fr in (bs.get("fallos_representativos") or []):
+            if len(fallos) < 5:
+                fallos.append(fr)
+        for ev in (bs.get("evidencia_tecnica") or []):
+            if len(evidencia) < 8:
+                evidencia.append(ev)
+        cats = bs.get("categorias") or {}
+        if isinstance(cats, dict):
+            for k, v in cats.items():
+                if isinstance(v, dict) and isinstance(categorias.get(k), dict):
+                    for kk, vv in v.items():
+                        if isinstance(vv, (int, float)):
+                            categorias[k][kk] = categorias[k].get(kk, 0) + vv
+                        else:
+                            categorias[k][kk] = vv
+                else:
+                    categorias[k] = v
+    pass_rate = round((aprobadas / total) * 100) if total else 0
+    return {
+        "ejecutadas": ejecutadas,
+        "total": total,
+        "aprobadas": aprobadas,
+        "fallidas": fallidas,
+        "pass_rate": pass_rate,
+        "categorias": categorias,
+        "fallos_representativos": fallos,
+        "evidencia_tecnica": evidencia,
+    }
+
+
 def _build_informe_enfoques(
     *,
     kind: str,
@@ -276,6 +333,7 @@ def _build_informe_enfoques(
     webhook_status: str = "",
     nodos: Optional[List[Dict[str, Any]]] = None,
     flujos_fallidos: Optional[List[Dict[str, Any]]] = None,
+    pruebas_summary: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     problemas = [p for p in (problemas or []) if isinstance(p, dict)]
     problemas_sorted = sorted(problemas, key=lambda p: _sev_rank(str(p.get("severidad", ""))))
@@ -283,7 +341,10 @@ def _build_informe_enfoques(
     for p in problemas_sorted:
         por_enfoque[_classify_problem(p)].append(_problem_to_item(p))
 
-    dyn = _batch_focus_summary(batch_result)
+    # `pruebas_summary` (agregado de varios nodos) tiene prioridad sobre un
+    # unico `batch_result`. Asi el panel refleja las pruebas dinamicas reales
+    # en run_proyecto/run_pipeline, donde no hay un batch_result monolitico.
+    dyn = pruebas_summary if pruebas_summary is not None else _batch_focus_summary(batch_result)
     score = round(float(score_general or 0.0))
     estado = "saludable" if score >= 85 else "requiere ajustes" if score >= 70 else "critico"
     trigger = trigger or {}
@@ -921,6 +982,14 @@ def run_n8n_single(
         batch_result = None
         reporte_ca = ""
         webhook_activo_msg = ""
+        # Sin payload_template explicito, inferir el sobre esperado desde el wf
+        # para que el flujo reciba el texto en su ruta real (cualquier estructura).
+        envelope_hint = None
+        if not payload_template:
+            try:
+                envelope_hint = mod.inferir_envelope_desde_wf(wf)
+            except Exception:
+                envelope_hint = None
         if total_conversaciones > 0 and webhook_url and oai_key:
             if modo_ejecucion == "sandbox":
                 progress(f"Simulando {total_conversaciones} conversaciones", 65)
@@ -934,6 +1003,7 @@ def run_n8n_single(
                         escenarios_extra=escenarios or [],
                         modo_ejecucion="sandbox",
                         payload_template=payload_template,
+                        envelope_hint=envelope_hint,
                     )
                     webhook_activo_msg = "sandbox: webhook no invocado"
                 except Exception as exc:
@@ -955,6 +1025,7 @@ def run_n8n_single(
                             escenarios_extra=escenarios or [],
                             modo_ejecucion="real",
                             payload_template=payload_template,
+                            envelope_hint=envelope_hint,
                         )
                     except Exception as exc:
                         reporte_ca = f"\n[CONTRA-AGENTE - Error: {exc}]\n"
@@ -1357,6 +1428,7 @@ def run_pipeline(
             problemas=problemas_pipeline,
             nodos=nodos_out,
             flujos_fallidos=flujos_fallidos,
+            pruebas_summary=_aggregate_pruebas_summary(nodos_out),
         )
         reporte_pipeline = reporte_pipeline + "\n\n" + _render_informe_enfoques_txt(informe_enfoques)
         reporte_path = _guardar_reporte_txt(pipeline_name, reporte_pipeline, "pipeline")
@@ -1601,6 +1673,26 @@ def run_proyecto(
             openai_key=openai_key,
         )
         contrato["modo_ejecucion"] = modo_ejecucion if incluir_conversaciones else "sin_conversaciones"
+        nodos_conversacion = []
+        flujos_fallidos = []
+        if isinstance(conversacion, dict):
+            nodos_conversacion = conversacion.get("nodos") or []
+            if conversacion.get("error"):
+                flujos_fallidos = [{
+                    "name": nombre or "Proyecto",
+                    "error": str(conversacion.get("error") or ""),
+                }]
+        informe_enfoques = _build_informe_enfoques(
+            kind="proyecto",
+            nombre=nombre or "Proyecto",
+            score_general=contrato.get("score") or 0.0,
+            problemas=contrato.get("problemas", []),
+            nodos=nodos_conversacion,
+            flujos_fallidos=flujos_fallidos,
+            pruebas_summary=_aggregate_pruebas_summary(nodos_conversacion),
+        )
+        contrato["informe_enfoques"] = _strip_non_serializable(informe_enfoques)
+        contrato["reporte_txt"] = _render_informe_enfoques_txt(informe_enfoques)
         progress("Listo", 100)
         return contrato
     finally:

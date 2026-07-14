@@ -431,12 +431,22 @@ def _evaluar_con_analisis(
         _spec = _ilu.spec_from_file_location("evaluar_n8n", Path(__file__).parent / "evaluar_n8n.py")
         _mod  = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_mod)
 
+        # Sin payload_template explicito, inferir el "sobre" que espera el flujo
+        # desde su propio JSON, para que el texto llegue a la ruta correcta y el
+        # flujo recorra todos sus nodos (funciona con cualquier estructura).
+        envelope_hint = None
+        if not payload_template and wf_data:
+            try:
+                envelope_hint = _mod.inferir_envelope_desde_wf(wf_data)
+            except Exception:
+                envelope_hint = None
+
         if HAS_CA and total_conv > 0 and modo_ejecucion == "sandbox":
             batch_result, reporte_ca = _mod.ejecutar_contra_agente(
                 analisis_n8n=analisis, webhook_url=webhook,
                 agent_name=nombre, total_conv=total_conv, concurrencia=concurrencia,
                 modo_ejecucion="sandbox", escenarios_extra=escenarios_extra or [],
-                payload_template=payload_template,
+                payload_template=payload_template, envelope_hint=envelope_hint,
             )
         elif HAS_CA and total_conv > 0 and webhook:
             # T-14: Verificar si el webhook está activo antes de gastar llamadas GPT
@@ -472,7 +482,7 @@ def _evaluar_con_analisis(
                     analisis_n8n=analisis, webhook_url=webhook,
                     agent_name=nombre, total_conv=total_conv, concurrencia=concurrencia,
                     modo_ejecucion="real", escenarios_extra=escenarios_extra or [],
-                    payload_template=payload_template,
+                    payload_template=payload_template, envelope_hint=envelope_hint,
                 )
         elif HAS_CA and total_conv > 0 and not webhook:
             # No hay webhook — generar sección explicativa usando info del trigger

@@ -39,10 +39,15 @@ try:
     from juez.evaluation.contra_agente.evaluator import TurnEvaluator as _TurnEvaluator
     from juez.evaluation.contra_agente.reporter import generar_reporte_batch as _ca_reporter
     from juez.evaluation.contra_agente.adapters.n8n import N8nAdapter as _N8nAdapter
+    from juez.evaluation.contra_agente.adapters.n8n import MARCADOR_MENSAJE, MARCADOR_SESSION
     from juez.evaluation.contra_agente.verificador_client import healthcheck as _verificador_healthcheck
     HAS_CONTRA_AGENTE = True
 except ImportError:
     HAS_CONTRA_AGENTE = False
+    # Fallback: los marcadores deben existir para inferir_envelope_desde_wf
+    # aunque el contra-agente no este disponible. Mismos valores que el adapter.
+    MARCADOR_MENSAJE = "{{JUEZ_MENSAJE}}"
+    MARCADOR_SESSION = "{{JUEZ_SESSION_ID}}"
 
 # Forzar UTF-8 en stdout/stderr para terminales Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -1877,6 +1882,115 @@ def _pedir_webhook_url() -> str:
     return url.strip()
 
 
+_ENVELOPE_MSG_KEYS = (
+    "message", "text", "chatinput", "mensaje", "body", "query", "question",
+    "content", "prompt", "input", "msg", "texto",
+)
+_ENVELOPE_SESSION_KEYS = ("sessionid", "session_id", "conversationid", "conversation_id", "chatid", "from", "wa_id", "waid")
+_ENVELOPE_IGNORE_ROOTS = (
+    "headers", "header", "params", "query", "http", "webhookurl", "executionmode",
+    "resume", "node", "workflow", "$", "item", "first", "last", "all", "now",
+    "today", "json", "binary", "pairedItem", "context", "env", "vars", "runIndex",
+)
+
+
+def _envelope_set_path(root: Dict[str, Any], path: List[str], value: Any) -> None:
+    cur = root
+    for key in path[:-1]:
+        nxt = cur.get(key)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[key] = nxt
+        cur = nxt
+    if path and path[-1] not in cur:
+        cur[path[-1]] = value
+
+
+def inferir_envelope_desde_wf(wf: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Infiere el "sobre" de entrada que espera un flujo n8n con webhook/chatTrigger.
+
+    Escanea las expresiones del flujo (`$json.body.X`, `$json.X`, `$('Node').item.json...`)
+    para reconstruir la forma que el flujo LEE del POST entrante, y coloca los
+    marcadores {{JUEZ_MENSAJE}} / {{JUEZ_SESSION_ID}} en los campos de texto y
+    de sesion. Esto permite que el Juez pruebe CUALQUIER flujo enviando los datos
+    en la ruta correcta (ej. WhatsApp: body.messages[0].text.body) sin que el
+    usuario configure nada. Devuelve None si no aplica (sin webhook) o no infiere nada.
+
+    Es un HINT que se FUSIONA sobre el payload generico (no lo reemplaza), asi
+    que sobre-capturar campos es inocuo.
+    """
+    if not isinstance(wf, dict):
+        return None
+    nodes = wf.get("nodes") or []
+    trigger_types = {"n8n-nodes-base.webhook", "@n8n/n8n-nodes-langchain.chatTrigger"}
+    if not any(isinstance(n, dict) and n.get("type") in trigger_types for n in nodes):
+        return None
+
+    try:
+        blob = json.dumps(wf, ensure_ascii=False)
+    except Exception:
+        return None
+
+    raw_paths: Set[str] = set()
+    # $json.body.a.b  /  $json.a
+    for m in re.finditer(r"\$json((?:\.[A-Za-z_][\w]*)+)", blob):
+        raw_paths.add(m.group(1).lstrip("."))
+    # $json['body']['a']  (notacion de corchetes)
+    for m in re.finditer(r"\$json((?:\[['\"][^'\"\]]+['\"]\])+)", blob):
+        keys = re.findall(r"\[['\"]([^'\"\]]+)['\"]\]", m.group(1))
+        if keys:
+            raw_paths.add(".".join(keys))
+    # $('Nodo').item.json.body.a / .first().json.a  -> captura tras .json
+    for m in re.finditer(r"\.json((?:\.[A-Za-z_][\w]*)+)", blob):
+        raw_paths.add(m.group(1).lstrip("."))
+
+    envelope: Dict[str, Any] = {}
+    for path_str in raw_paths:
+        parts = [p for p in path_str.split(".") if p]
+        if not parts or len(parts) > 5:
+            continue
+        if parts[0].lower() in _ENVELOPE_IGNORE_ROOTS:
+            continue
+        leaf = parts[-1].lower()
+        if leaf in _ENVELOPE_SESSION_KEYS:
+            value: Any = MARCADOR_SESSION
+        elif leaf in _ENVELOPE_MSG_KEYS:
+            value = MARCADOR_MENSAJE
+        else:
+            # Campo de negocio: valor por defecto inferido por nombre.
+            value = _infer_envelope_default(leaf)
+        _envelope_set_path(envelope, parts, value)
+        if len(envelope) > 25:
+            break
+
+    # Garantia: si nada quedo con el marcador de mensaje, forzar los campos mas
+    # comunes para que el texto SIEMPRE llegue por alguna ruta que el flujo lea.
+    if MARCADOR_MENSAJE not in json.dumps(envelope, ensure_ascii=False):
+        envelope.setdefault("body", {})
+        if isinstance(envelope["body"], dict):
+            envelope["body"].setdefault("message", MARCADOR_MENSAJE)
+        envelope.setdefault("message", MARCADOR_MENSAJE)
+        envelope.setdefault("chatInput", MARCADOR_MENSAJE)
+
+    return envelope or None
+
+
+def _infer_envelope_default(leaf: str) -> str:
+    if any(k in leaf for k in ("email", "correo")):
+        return "qa.lambda@example.com"
+    if any(k in leaf for k in ("phone", "telefono", "celular", "whatsapp", "mobile", "numero")):
+        return "573001234567"
+    if any(k in leaf for k in ("name", "nombre", "cliente")):
+        return "Sergio QA"
+    if any(k in leaf for k in ("fecha", "date")):
+        return "2026-07-10"
+    if any(k in leaf for k in ("hora", "time")):
+        return "10:00"
+    if any(k in leaf for k in ("id", "ref", "pedido", "orden", "caso")):
+        return "QA-77421"
+    return "dato de prueba QA"
+
+
 def ejecutar_contra_agente(
     analisis_n8n: Dict[str, Any],
     webhook_url: str,
@@ -1890,6 +2004,7 @@ def ejecutar_contra_agente(
     e2e_real_inventario_id: Optional[int] = None,
     modo_ejecucion: str = "real",
     payload_template: Optional[Dict[str, Any]] = None,
+    envelope_hint: Optional[Dict[str, Any]] = None,
 ) -> tuple:
     """Corre el contra-agente contra el flujo n8n. Retorna (batch_result, reporte_texto).
 
@@ -1934,6 +2049,7 @@ def ejecutar_contra_agente(
             input_fields=input_fields,
             agent_name=agent_name,
             payload_template=payload_template,
+            envelope_hint=envelope_hint if not payload_template else None,
         )
 
     evaluator = _TurnEvaluator(openai_key=openai_key)

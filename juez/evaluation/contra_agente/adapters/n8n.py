@@ -39,6 +39,16 @@ def _sustituir_marcadores(nodo: Any, mensaje: str, session_id: str) -> Any:
     return nodo
 
 
+def _deep_merge(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+    """Fusiona `extra` sobre `base` de forma recursiva (extra tiene prioridad)."""
+    for k, v in (extra or {}).items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
 class N8nAdapter:
     """Adapter para agentes n8n expuestos via webhook."""
 
@@ -50,6 +60,7 @@ class N8nAdapter:
         input_fields: Optional[List[str]] = None,
         agent_name: str = "",
         payload_template: Optional[Dict[str, Any]] = None,
+        envelope_hint: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.webhook_url = webhook_url
         self.auth_headers = auth_headers or {}
@@ -57,6 +68,12 @@ class N8nAdapter:
         self.input_fields = _dedupe_fields(input_fields or [])
         self.agent_name = agent_name
         self.payload_template = payload_template
+        # `envelope_hint`: sobre anidado INFERIDO del propio flujo n8n (ej.
+        # {"body": {"message": "{{JUEZ_MENSAJE}}"}}). A diferencia de
+        # `payload_template` (reemplazo total), esto se FUSIONA sobre el payload
+        # shotgun para que el flujo reciba el texto en la ruta que realmente lee,
+        # sin perder los alias planos. Solo aplica cuando no hay payload_template.
+        self.envelope_hint = envelope_hint
         self.session_id = f"juez-{uuid.uuid4().hex[:12]}"
         self.last_debug: Dict[str, Any] = {}
 
@@ -178,6 +195,15 @@ class N8nAdapter:
             },
         }
         payload.update(inferred)
+        # Fusionar el sobre inferido del flujo (rutas anidadas que el flujo lee
+        # de verdad, ej. body.message). Los marcadores se sustituyen aqui con el
+        # mensaje/sesion del turno actual.
+        if self.envelope_hint:
+            envelope = _sustituir_marcadores(
+                copy.deepcopy(self.envelope_hint), message, self.session_id
+            )
+            if isinstance(envelope, dict):
+                _deep_merge(payload, envelope)
         return payload
 
 

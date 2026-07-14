@@ -21,6 +21,8 @@ from .models import (
 )
 from .synthetic.snapshot_factory import make_data as _make_e2e_data
 
+MAX_PLAN_TURNS = 10
+
 _CATEGORY_RULES = """
 REGLA FUNDAMENTAL (aplica a TODAS las categorías sin excepción):
 Todos los usuarios deben ser clientes reales del agente que se evalúa. Su estado emocional
@@ -497,6 +499,9 @@ def _parse_plans(raw_json: str, batch_id: str, agent_id: str, adapter: str) -> L
 
             if not turns:
                 continue
+            turns = turns[:MAX_PLAN_TURNS]
+            for idx_turn, turn in enumerate(turns, start=1):
+                turn.turn_id = idx_turn
 
             plan = ConversationPlan(
                 plan_id=p.get("plan_id", f"conv_{i:02d}"),
@@ -1225,6 +1230,7 @@ def _generar_planes_heuristicos(
                     metrics=_METRICS.get(category, ["task_success"]),
                 ))
 
+            turns = turns[:MAX_PLAN_TURNS]
             plan = ConversationPlan(
                 plan_id=f"conv_{idx:02d}",
                 category=category,
