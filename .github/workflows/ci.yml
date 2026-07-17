@@ -7,6 +7,25 @@ on:
     branches: [main]
 
 jobs:
+  guard:
+    # Bloquea el merge si hay marcadores de conflicto de git sin resolver.
+    # Exactamente el incidente que rompió runner.py en producción (SyntaxError
+    # por <<<<<<< / ======= / >>>>>>> commiteados).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sin marcadores de conflicto de git
+        run: |
+          if grep -rnE '^(<<<<<<< |=======$|>>>>>>> )' \
+               --include='*.py' --include='*.yml' --include='*.yaml' \
+               --include='*.json' --include='*.txt' --include='*.md' \
+               --exclude-dir='.venv' --exclude-dir='venv' --exclude-dir='node_modules' \
+               --exclude-dir='.git' --exclude-dir='outputs' --exclude-dir='__pycache__' .; then
+            echo "::error::Hay marcadores de conflicto de git sin resolver."
+            exit 1
+          fi
+          echo "OK: sin marcadores de conflicto."
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -17,6 +36,29 @@ jobs:
       - run: pip install ruff==0.5.0
       - run: ruff check . || true  # no bloquea — solo informa hasta que el código esté limpio
       - run: ruff format --check . || true
+
+  test-colmena:
+    # Protege el motor de La Colmena (rigor, robustez, cobertura, monitores,
+    # self-heal). Antes NO estaba en CI, asi que el endurecimiento no tenia red.
+    # Se excluye control_plane (dependencia sqlalchemy rota, sin uso en prod) y
+    # test_api_e2e_real (requiere credenciales reales de ElevenLabs/n8n).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: pip install Pillow reportlab pymupdf
+      - run: |
+          python -m pytest \
+            juez/evaluation/tests/ \
+            juez/tests/ \
+            --ignore=juez/tests/test_control_plane \
+            --ignore=juez/tests/test_api_e2e_real.py \
+            -q --tb=short -p no:xdist -p no:rerunfailures
+        env:
+          OPENAI_API_KEY: "dummy-key-for-mocks"
 
   test-juez:
     runs-on: ubuntu-latest

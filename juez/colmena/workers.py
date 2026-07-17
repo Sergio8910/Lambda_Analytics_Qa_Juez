@@ -111,6 +111,7 @@ def evaluate_project_workers(root: Path, inventory: ProjectInventory) -> list[No
         findings.extend(ApiWorker(root, inventory, builder).run())
     if inventory.detected_assets.get("workflows", 0):
         findings.extend(WorkflowWorker(root, inventory, builder).run())
+        findings.extend(CodeNodeWorker(root, inventory, builder).run())
     if inventory.detected_assets.get("agents", 0) or inventory.detected_assets.get("prompts", 0):
         findings.extend(AgentPromptWorker(root, inventory, builder).run())
     findings.extend(ArchitectureWorker(root, inventory, builder).run())
@@ -331,6 +332,121 @@ class ApiWorker(BaseWorker):
                     source=self.source,
                 ))
         return out
+
+
+_CODE_NODE_TYPES = (
+    "n8n-nodes-base.code",
+    "n8n-nodes-base.function",
+    "n8n-nodes-base.functionItem",
+)
+_CODE_PARAM_KEYS = ("jsCode", "pythonCode", "functionCode", "code")
+# Ejecucion dinamica / de comandos: casi nunca es legitima dentro de un Code
+# node y es un vector directo de RCE/inyeccion si el input llega del usuario.
+_EXEC_DINAMICA_RE = re.compile(
+    r"(?i)\b(eval|exec|new\s+Function|Function|execSync|spawnSync|os\.system|__import__)\s*\(|"
+    r"child_process|require\(\s*['\"]child_process['\"]|subprocess\.(?:Popen|call|run|check_output)"
+)
+# Lectura sin filtro: un SELECT ... FROM sin clausula WHERE puede exponer datos
+# de otros clientes/tenants -- el caso 'SELECT * FROM huespedes' sin filtrar.
+# Un SELECT con WHERE NO se marca (esta filtrado): evita gritar en falso.
+_SELECT_RE = re.compile(r"(?is)\bselect\b.*?\bfrom\b")
+_WHERE_RE = re.compile(r"(?i)\bwhere\b")
+# SSRF por codigo: una llamada HTTP cuya URL se arma con input interpolado.
+_HTTP_EN_CODIGO_RE = re.compile(r"(?i)\b(fetch|axios|https?\.request|requests\.(?:get|post|put|delete)|urllib)\b")
+_INTERPOLACION_RE = re.compile(r"\$\{|\$json|\$node|\$\(|\$input|\+\s*(?:input|msg|body|payload)", re.I)
+
+
+def _iter_code_nodes(workflow: dict) -> "list[tuple[str, str]]":
+    """Devuelve [(nombre_nodo, codigo)] de los Code/Function nodes del flujo."""
+    out: list[tuple[str, str]] = []
+    for node in workflow.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        if node.get("type") not in _CODE_NODE_TYPES:
+            continue
+        params = node.get("parameters") or {}
+        codigo = ""
+        for key in _CODE_PARAM_KEYS:
+            val = params.get(key)
+            if isinstance(val, str) and val.strip():
+                codigo = val
+                break
+        if codigo:
+            out.append((str(node.get("name") or "Code"), codigo))
+    return out
+
+
+class CodeNodeWorker(BaseWorker):
+    """Analiza el CODIGO dentro de los Code/Function nodes de n8n.
+
+    Cubre un punto ciego real: hasta ahora las obreras solo veian el prompt del
+    agente, no la logica de los nodos -- una fuga de datos o un exec peligroso
+    escrito en un Function node era invisible para el analisis de seguridad."""
+
+    source = "code_node_worker"
+
+    def run(self) -> list[NormalizedFinding]:
+        out: list[NormalizedFinding] = []
+        for asset in (a for a in self.inventory.assets if a.kind == "n8n_workflow"):
+            try:
+                workflow = json.loads((self.root / asset.path).read_text(encoding="utf-8", errors="ignore"))
+            except Exception:
+                continue
+            for nombre_nodo, codigo in _iter_code_nodes(workflow):
+                out.extend(self._analizar_codigo(asset.path, nombre_nodo, codigo))
+        return out
+
+    def _analizar_codigo(self, archivo: str, nodo: str, codigo: str) -> list[NormalizedFinding]:
+        hallazgos: list[NormalizedFinding] = []
+        m_exec = _EXEC_DINAMICA_RE.search(codigo)
+        if m_exec:
+            hallazgos.append(self.f.make(
+                severity="critical",
+                category="security",
+                title="Ejecucion dinamica/de comandos en un Code node",
+                description=(
+                    f"El nodo '{nodo}' ejecuta codigo/comandos dinamicamente "
+                    f"({m_exec.group(0).strip()[:40]}). Si el input llega del usuario, "
+                    "es un vector directo de RCE o inyeccion."
+                ),
+                file=archivo,
+                evidence=m_exec.group(0).strip()[:200],
+                impact="Un atacante podria ejecutar codigo/comandos arbitrarios en el runtime del flujo.",
+                recommendation="Eliminar eval/exec/child_process; usar operaciones seguras y validar toda entrada.",
+                source=self.source,
+            ))
+        m_select = _SELECT_RE.search(codigo)
+        if m_select and not _WHERE_RE.search(codigo):
+            hallazgos.append(self.f.make(
+                severity="high",
+                category="security",
+                title="Consulta de datos sin filtro (posible fuga entre clientes)",
+                description=(
+                    f"El nodo '{nodo}' hace un SELECT ... FROM sin clausula WHERE. Puede traer "
+                    "datos de otros clientes/registros si no se filtra por el dueno del contexto."
+                ),
+                file=archivo,
+                evidence=m_select.group(0).strip()[:200],
+                impact="Exposicion de datos de otros usuarios/tenants (fuga de informacion).",
+                recommendation="Filtrar SIEMPRE por el identificador del cliente/usuario del contexto (WHERE) y seleccionar solo las columnas necesarias.",
+                source=self.source,
+            ))
+        if _HTTP_EN_CODIGO_RE.search(codigo) and _INTERPOLACION_RE.search(codigo):
+            hallazgos.append(self.f.make(
+                severity="medium",
+                category="security",
+                title="Posible SSRF: llamada HTTP con URL interpolada en un Code node",
+                description=(
+                    f"El nodo '{nodo}' hace una llamada HTTP cuya URL parece construirse con "
+                    "input interpolado. Si el destino depende del usuario, permite SSRF."
+                ),
+                file=archivo,
+                evidence=_HTTP_EN_CODIGO_RE.search(codigo).group(0).strip()[:200],
+                impact="Un atacante podria forzar peticiones a hosts internos/metadata.",
+                recommendation="Validar el destino contra una allowlist y bloquear IPs privadas/metadata.",
+                source=self.source,
+            ))
+        return hallazgos
 
 
 class WorkflowWorker(BaseWorker):
