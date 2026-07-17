@@ -402,6 +402,8 @@ def certificar_proyecto_endpoint(req: CertificacionRequest) -> Dict[str, Any]:
         min_confidence=req.min_confidence,
         max_lines_per_fix=req.max_lines_per_fix,
         enable_generic_fixer=req.enable_generic_fixer,
+        presupuesto_tokens=req.presupuesto_tokens,
+        presupuesto_usd=req.presupuesto_usd,
         openai_key=req.openai_key or "",
         n8n_api_key=req.n8n_api_key or "",
         n8n_base_url=req.n8n_base_url or "",

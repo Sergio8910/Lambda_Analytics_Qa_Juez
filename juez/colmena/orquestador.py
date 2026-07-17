@@ -72,6 +72,14 @@ def _veredicto(report) -> Dict[str, Any]:
             "motivo": f"Score {s.score} por debajo del mínimo aceptable."}
 
 
+def _tokens_de(summary: Any) -> tuple[int, float]:
+    """(tokens, usd) de un cost summary (dynamic_cost_summary / generic_fixer),
+    tolerante a None/claves faltantes."""
+    if not isinstance(summary, dict):
+        return 0, 0.0
+    return int(summary.get("total_tokens") or 0), float(summary.get("total_cost_usd") or 0.0)
+
+
 def certificar_proyecto(
     project_path: Path | str,
     *,
@@ -81,20 +89,39 @@ def certificar_proyecto(
     min_confidence: float = 0.85,
     max_lines_per_fix: int = 40,
     enable_generic_fixer: bool = False,
+    presupuesto_tokens: int | None = None,
+    presupuesto_usd: float | None = None,
     output_dir: Path | str = "outputs",
 ) -> Dict[str, Any]:
     """Corre el ciclo analizar->evaluar->construir->iterar hasta converger y
     emite un certificado. Devuelve un dict serializable.
 
     Convergencia = una ronda de self-heal ya no aplica NINGÚN fix (kept==0), o
-    ya no quedan críticos/altos, o se agotan las rondas. La parada es explícita
-    (motivo_parada) para que nunca sea ambigua.
+    ya no quedan críticos/altos, o se agotan las rondas, o se agota el
+    presupuesto de tokens/USD. La parada es explícita (motivo_parada).
+
+    Optimización de tokens (importante): el análisis estático es Python
+    determinista y cuesta CERO tokens, así que el LAZO de fixes corre solo con
+    evaluación estática (gratis). La capa dinámica cara (LLM: adversarial/edge/
+    propósito) corre UNA sola vez al final, para el certificado -- no en cada
+    ronda. Cada llamada LLM ya usa contexto reducido (un caso, no el proyecto
+    entero), así que el "enjambre de contexto" es implícito por diseño.
     """
     root = Path(project_path).resolve()
+    tokens_gastados = 0
+    usd_gastado = 0.0
 
-    report = evaluate_project_path(root, incluir_dinamicas=incluir_dinamicas)
+    def presupuesto_excedido() -> bool:
+        if presupuesto_tokens is not None and tokens_gastados >= presupuesto_tokens:
+            return True
+        if presupuesto_usd is not None and usd_gastado >= presupuesto_usd:
+            return True
+        return False
+
+    # Evaluación inicial ESTÁTICA (gratis) para conducir el lazo de fixes.
+    report = evaluate_project_path(root, incluir_dinamicas=False)
     inicial = _snapshot(report)
-    rondas: List[Dict[str, Any]] = [{"ronda": 0, "fase": "evaluacion_inicial", **inicial}]
+    rondas: List[Dict[str, Any]] = [{"ronda": 0, "fase": "evaluacion_inicial_estatica", **inicial}]
 
     motivo_parada = "sin_auto_fix"
     convergio = False
@@ -103,10 +130,12 @@ def certificar_proyecto(
         from .self_heal_agent import run_self_heal
 
         for i in range(1, max_rondas + 1):
-            # ¿Queda algo que valga la pena intentar arreglar?
             if report.score.critical_findings == 0 and report.score.high_findings == 0:
                 motivo_parada = "sin_criticos_ni_altos"
                 convergio = True
+                break
+            if presupuesto_excedido():
+                motivo_parada = "cortado_por_presupuesto"
                 break
 
             heal = run_self_heal(
@@ -117,9 +146,12 @@ def certificar_proyecto(
                 output_dir=output_dir,
                 enable_generic_fixer=enable_generic_fixer,
             )
-            report = evaluate_project_path(root, incluir_dinamicas=incluir_dinamicas)
+            t, u = _tokens_de(getattr(heal, "generic_fixer_cost_summary", None))
+            tokens_gastados += t
+            usd_gastado += u
+            report = evaluate_project_path(root, incluir_dinamicas=False)  # estático: gratis
             rondas.append({
-                "ronda": i, "fase": "construccion_y_reevaluacion",
+                "ronda": i, "fase": "construccion_y_reevaluacion_estatica",
                 "fixes_aplicados": heal.kept_fixes,
                 "fixes_revertidos": heal.rolled_back_fixes,
                 "bloqueados": heal.blocked_findings,
@@ -127,13 +159,22 @@ def certificar_proyecto(
             })
 
             if heal.kept_fixes == 0:
-                # La ronda no logró mejorar nada: converge (no hay más que hacer
-                # automáticamente; lo que resta requiere humano).
                 motivo_parada = "sin_mejoras_en_la_ronda"
                 convergio = True
                 break
         else:
             motivo_parada = "max_rondas_alcanzado"
+
+    # Evaluación final: si se pidieron dinámicas Y hay presupuesto, se corre UNA
+    # vez la capa cara para que el certificado refleje también lo dinámico.
+    dinamicas_ejecutadas = False
+    if incluir_dinamicas and not presupuesto_excedido():
+        report = evaluate_project_path(root, incluir_dinamicas=True)
+        dinamicas_ejecutadas = True
+        t, u = _tokens_de(getattr(report, "dynamic_cost_summary", None))
+        tokens_gastados += t
+        usd_gastado += u
+        rondas.append({"ronda": len(rondas), "fase": "evaluacion_final_dinamica", **_snapshot(report)})
 
     certificado = _veredicto(report)
     return {
@@ -145,6 +186,14 @@ def certificar_proyecto(
         "score_final": report.score.score,
         "estado_final": report.score.status,
         "rondas": rondas,
+        "dinamicas_ejecutadas": dinamicas_ejecutadas,
+        "presupuesto": {
+            "tokens_gastados": tokens_gastados,
+            "usd_gastado": round(usd_gastado, 4),
+            "tope_tokens": presupuesto_tokens,
+            "tope_usd": presupuesto_usd,
+            "cortado_por_presupuesto": motivo_parada == "cortado_por_presupuesto",
+        },
         "hallazgos_restantes": _findings_serializables(report),
         "requiere_revision_humana": [
             {"id": f.id, "severidad": f.severity, "categoria": f.category, "titulo": f.title}
@@ -153,7 +202,8 @@ def certificar_proyecto(
         "cobertura": getattr(report, "coverage", {}) or {},
         "nota": (
             "Certificación consciente de cobertura: solo se certifica 'todo bien' sobre las "
-            "dimensiones realmente evaluadas (ver 'cobertura'). El ciclo se detuvo por: "
-            f"{motivo_parada}."
+            "dimensiones realmente evaluadas (ver 'cobertura'). El lazo de fixes corre con "
+            "análisis estático (gratis); la capa dinámica LLM corre una vez al final. "
+            f"El ciclo se detuvo por: {motivo_parada}."
         ),
     }

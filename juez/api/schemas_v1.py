@@ -296,6 +296,8 @@ class CertificacionRequest(BaseModel):
     min_confidence: float = Field(0.85, ge=0.0, le=1.0, description="Confianza mínima para aplicar un fix")
     max_lines_per_fix: int = Field(40, ge=1, le=500, description="Máximo de líneas que un fix puede cambiar")
     enable_generic_fixer: bool = Field(False, description="Fixer genérico (LLM en sandbox). Más caro/lento.")
+    presupuesto_tokens: Optional[int] = Field(None, ge=0, description="Techo duro de tokens: el ciclo se corta al alcanzarlo.")
+    presupuesto_usd: Optional[float] = Field(None, ge=0, description="Techo duro de USD estimado: el ciclo se corta al alcanzarlo.")
     openai_key: Optional[str] = None
     n8n_api_key: Optional[str] = None
     n8n_base_url: Optional[str] = None

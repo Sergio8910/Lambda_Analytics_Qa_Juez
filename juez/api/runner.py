@@ -1911,6 +1911,8 @@ def run_certificacion(
     min_confidence: float = 0.85,
     max_lines_per_fix: int = 40,
     enable_generic_fixer: bool = False,
+    presupuesto_tokens: Optional[int] = None,
+    presupuesto_usd: Optional[float] = None,
     openai_key: str = "",
     n8n_api_key: str = "",
     n8n_base_url: str = "",
@@ -1953,6 +1955,8 @@ def run_certificacion(
                 min_confidence=min_confidence,
                 max_lines_per_fix=max_lines_per_fix,
                 enable_generic_fixer=enable_generic_fixer,
+                presupuesto_tokens=presupuesto_tokens,
+                presupuesto_usd=presupuesto_usd,
                 output_dir=root_tmp / "_cert_output",
             )
             certificado["nombre"] = nombre or "Proyecto"

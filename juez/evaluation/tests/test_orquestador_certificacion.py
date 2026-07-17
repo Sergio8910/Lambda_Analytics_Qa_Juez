@@ -88,6 +88,42 @@ def test_sin_auto_fix_solo_evalua_y_certifica(monkeypatch):
     assert cert["score_final"] == 88
 
 
+def test_presupuesto_de_tokens_corta_el_ciclo(monkeypatch):
+    """Con un techo de tokens y una capa que gasta, el ciclo se corta y lo
+    reporta explicitamente (cortado_por_presupuesto)."""
+    monkeypatch.setattr(orq, "evaluate_project_path", lambda root, **k: _report(60, altos=2))
+
+    def _heal_caro(root, **k):
+        return SimpleNamespace(
+            kept_fixes=1, rolled_back_fixes=0, blocked_findings=0, human_review_required=[],
+            generic_fixer_cost_summary={"total_tokens": 5000, "total_cost_usd": 0.05},
+        )
+    import juez.colmena.self_heal_agent as sh
+    monkeypatch.setattr(sh, "run_self_heal", _heal_caro)
+
+    with tempfile.TemporaryDirectory() as t:
+        cert = certificar_proyecto(Path(t), max_rondas=10, presupuesto_tokens=6000)
+    assert cert["motivo_parada"] == "cortado_por_presupuesto"
+    assert cert["presupuesto"]["cortado_por_presupuesto"] is True
+    assert cert["presupuesto"]["tokens_gastados"] >= 5000
+
+
+def test_dinamicas_corren_una_sola_vez_al_final(monkeypatch):
+    """El lazo usa evaluacion estatica (incluir_dinamicas=False); la dinamica
+    (True) solo se invoca UNA vez al final. Optimiza tokens."""
+    llamadas = {"estatica": 0, "dinamica": 0}
+
+    def _fake_eval(root, *, incluir_dinamicas=False, **k):
+        llamadas["dinamica" if incluir_dinamicas else "estatica"] += 1
+        return _report(90, criticos=0, altos=0)
+    monkeypatch.setattr(orq, "evaluate_project_path", _fake_eval)
+
+    with tempfile.TemporaryDirectory() as t:
+        cert = certificar_proyecto(Path(t), incluir_dinamicas=True, auto_fix=True)
+    assert llamadas["dinamica"] == 1  # exactamente una vez, al final
+    assert cert["dinamicas_ejecutadas"] is True
+
+
 def test_integracion_real_ciclo_completo_sube_score():
     """Sin mocks: un prompt con inyección debe evaluarse, auto-arreglarse y
     subir el score tras el ciclo. No afirma un veredicto exacto (depende del
