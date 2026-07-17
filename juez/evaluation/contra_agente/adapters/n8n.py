@@ -28,6 +28,11 @@ import requests
 MARCADOR_MENSAJE = "{{JUEZ_MENSAJE}}"
 MARCADOR_SESSION = "{{JUEZ_SESSION_ID}}"
 
+# Reintentos ante fallos transitorios (timeout/conexion/5xx). Modulo-level para
+# que los tests puedan bajarlos a 0 y no dormir.
+_MAX_INTENTOS = 3
+_BACKOFF_BASE_S = 0.5
+
 
 def _sustituir_marcadores(nodo: Any, mensaje: str, session_id: str) -> Any:
     if isinstance(nodo, dict):
@@ -94,55 +99,73 @@ class N8nAdapter:
         }
         headers = {"Content-Type": "application/json", **self.auth_headers}
 
-        t0 = time.time()
-        try:
-            resp = requests.post(
-                self.webhook_url,
-                params=params,
-                json=payload,
-                headers=headers,
-                timeout=self.timeout_s,
-            )
-            latency_ms = (time.time() - t0) * 1000
-            self.last_debug = {
-                "url": self.webhook_url,
-                "method": "POST",
-                "status_code": resp.status_code,
-                "latency_ms": round(latency_ms, 1),
-                "payload_enviado": _redact_payload(payload),
-                "query_enviado": params,
-                "response_preview": (resp.text or "")[:800],
-            }
-            resp.raise_for_status()
+        # Reintentos ante fallos TRANSITORIOS (timeout, error de conexion, 5xx):
+        # un blip pasajero en un turno intermedio envenenaba la conversacion
+        # entera (el "[ERROR:...]" quedaba en el history y arrastraba los turnos
+        # siguientes). Un 4xx NO se reintenta: es error de cliente, no se
+        # arregla solo. Tras agotar intentos, devuelve el error (last_debug ya
+        # refleja el fallo, y el worker lo trata como fallo de transporte).
+        ultimo_error = "error desconocido"
+        for intento in range(1, _MAX_INTENTOS + 1):
+            t0 = time.time()
             try:
-                data = resp.json()
-            except Exception:
-                data = {"text": resp.text}
+                resp = requests.post(
+                    self.webhook_url,
+                    params=params,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout_s,
+                )
+                latency_ms = (time.time() - t0) * 1000
+                self.last_debug = {
+                    "url": self.webhook_url,
+                    "method": "POST",
+                    "status_code": resp.status_code,
+                    "latency_ms": round(latency_ms, 1),
+                    "payload_enviado": _redact_payload(payload),
+                    "query_enviado": params,
+                    "response_preview": (resp.text or "")[:800],
+                }
+                if resp.status_code >= 500 and intento < _MAX_INTENTOS:
+                    ultimo_error = f"HTTP {resp.status_code}"
+                    time.sleep(_BACKOFF_BASE_S * intento)
+                    continue
+                resp.raise_for_status()
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"text": resp.text}
 
-            text = (
-                data.get("response")
-                or data.get("message")
-                or data.get("reply")
-                or data.get("answer")
-                or data.get("output")
-                or data.get("text")
-                or data.get("chatOutput")
-                or str(data)
-            )
-            return str(text), latency_ms
-        except requests.exceptions.Timeout:
-            latency_ms = (time.time() - t0) * 1000
-            self.last_debug = _error_debug(self.webhook_url, payload, params, latency_ms, f"Timeout >{self.timeout_s}s")
-            return f"[ERROR: Timeout >{self.timeout_s}s]", latency_ms
-        except requests.exceptions.ConnectionError as exc:
-            latency_ms = (time.time() - t0) * 1000
-            self.last_debug = _error_debug(self.webhook_url, payload, params, latency_ms, str(exc)[:300])
-            return f"[ERROR: ConnectionError: {exc}]", latency_ms
-        except Exception as exc:
-            latency_ms = (time.time() - t0) * 1000
-            if not self.last_debug:
+                text = (
+                    data.get("response")
+                    or data.get("message")
+                    or data.get("reply")
+                    or data.get("answer")
+                    or data.get("output")
+                    or data.get("text")
+                    or data.get("chatOutput")
+                    or str(data)
+                )
+                return str(text), latency_ms
+            except requests.exceptions.Timeout:
+                latency_ms = (time.time() - t0) * 1000
+                ultimo_error = f"Timeout >{self.timeout_s}s"
+                self.last_debug = _error_debug(self.webhook_url, payload, params, latency_ms, ultimo_error)
+            except requests.exceptions.ConnectionError as exc:
+                latency_ms = (time.time() - t0) * 1000
+                ultimo_error = f"ConnectionError: {exc}"
                 self.last_debug = _error_debug(self.webhook_url, payload, params, latency_ms, str(exc)[:300])
-            return f"[ERROR: {exc}]", latency_ms
+            except Exception as exc:
+                # Incluye HTTPError de raise_for_status (4xx u otro no transitorio):
+                # no reintentar, devolver de inmediato.
+                latency_ms = (time.time() - t0) * 1000
+                if not self.last_debug:
+                    self.last_debug = _error_debug(self.webhook_url, payload, params, latency_ms, str(exc)[:300])
+                return f"[ERROR: {exc}]", latency_ms
+            # Fallo transitorio (timeout/conexion): reintentar si quedan intentos.
+            if intento < _MAX_INTENTOS:
+                time.sleep(_BACKOFF_BASE_S * intento)
+        return f"[ERROR: {ultimo_error}]", latency_ms
 
     def _build_payload(self, message: str, recent_history: List[Dict[str, str]]) -> Dict[str, Any]:
         """Construye un payload amplio para maximizar compatibilidad con n8n.

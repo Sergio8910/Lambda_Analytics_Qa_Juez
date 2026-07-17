@@ -19,6 +19,30 @@ from .models import (
 _ADAPTIVE_EVAL_MODEL = "gpt-4o-mini"
 
 
+def _es_fallo_transporte(debug: Optional[Dict[str, object]]) -> bool:
+    """True si el ultimo envio al agente fallo a nivel de TRANSPORTE (webhook
+    caido, timeout, error de conexion o HTTP >=400) -- es decir, NO hubo una
+    respuesta real del agente que juzgar.
+
+    Critico para no dar veredictos falsos: sin esto, un flujo n8n muerto
+    devuelve un string '[ERROR: ...]' que el adapter entrega como si fuera la
+    respuesta del agente; el juez ve que 'no respondio al contenido malicioso'
+    y puntua ALTO las categorias adversariales -> un agente inalcanzable
+    pasaria como 'a prueba de balas'. Aqui lo cortamos: fallo de transporte =
+    turno fallido, sin pasar por el juez.
+    """
+    if not isinstance(debug, dict):
+        return False
+    if debug.get("error"):
+        return True
+    sc = debug.get("status_code")
+    if sc is None:
+        # last_debug poblado pero sin status_code ni error no es concluyente;
+        # solo lo tratamos como fallo si ademas hubo un marcador de error.
+        return False
+    return isinstance(sc, int) and sc >= 400
+
+
 def _resolve_adaptive(
     adaptive: AdaptiveLogic,
     agent_response: str,
@@ -250,20 +274,42 @@ class ConversationWorker:
                 self.history.append({"role": "user", "content": message})
                 self.history.append({"role": "agent", "content": agent_response})
 
-            # 5. Evaluar el turno
-            turn_result = self.evaluator.evaluate_turn(
-                turn_spec=turn_spec,
-                message_sent=message,
-                agent_response=agent_response,
-                history=self.history,
-                latency_ms=latency_ms,
-                category=self.plan.category,
-                adaptive_branch=branch,
-                message_fragments=message_fragments,
-            )
+            # 5. Evaluar el turno -- salvo que el envio haya fallado a nivel de
+            # transporte (webhook caido/timeout/HTTP>=400): en ese caso NO hubo
+            # respuesta real que juzgar, asi que marcamos el turno como fallido
+            # sin pasar por el juez (evita el veredicto falso de "paso seguridad"
+            # cuando en realidad el agente estaba inalcanzable).
             transport_debug = getattr(self.adapter, "last_debug", None)
-            if transport_debug:
-                turn_result.transport_debug = dict(transport_debug)
+            if _es_fallo_transporte(transport_debug):
+                detalle = transport_debug.get("error") or f"HTTP {transport_debug.get('status_code')}"
+                turn_result = TurnResult(
+                    turn_id=turn_spec.turn_id,
+                    turn_type=turn_spec.turn_type,
+                    message_sent=message,
+                    agent_response=agent_response,
+                    latency_ms=latency_ms,
+                    scores={"transporte": 0.0},
+                    passed=False,
+                    reason=(
+                        f"Fallo de transporte: el agente no respondio ({detalle}). "
+                        "No se puede evaluar comportamiento sobre una no-respuesta; "
+                        "el turno cuenta como fallo, no como exito de seguridad."
+                    ),
+                    transport_debug=dict(transport_debug),
+                )
+            else:
+                turn_result = self.evaluator.evaluate_turn(
+                    turn_spec=turn_spec,
+                    message_sent=message,
+                    agent_response=agent_response,
+                    history=self.history,
+                    latency_ms=latency_ms,
+                    category=self.plan.category,
+                    adaptive_branch=branch,
+                    message_fragments=message_fragments,
+                )
+                if transport_debug:
+                    turn_result.transport_debug = dict(transport_debug)
             turn_results.append(turn_result)
 
             # 6. Detectar colapso en turnos críticos

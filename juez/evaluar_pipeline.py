@@ -359,8 +359,19 @@ def _verificar_webhook_activo(
         # Cualquier otra respuesta HTTP (200, 405, 500, etc.) → existe el webhook
         return True, ""
 
+    except (_req.exceptions.Timeout, _req.exceptions.ConnectionError) as exc:
+        # Host inalcanzable / timeout / DNS: el batch real (que hace POST a la
+        # MISMA URL) tambien va a fallar turno por turno. Devolver False evita
+        # gastar la generacion de planes con GPT y N conversaciones que solo
+        # van a timeoutear. Antes esto devolvia True ("asumir activo") y quemaba
+        # tokens contra un webhook muerto.
+        return False, (
+            f"Webhook inalcanzable ({type(exc).__name__}): {exc}. "
+            "Verifica la URL y que el flujo este activo antes de correr pruebas."
+        )
     except Exception as exc:
-        # No se pudo conectar — intentar igual y reportar
+        # Otro error inesperado del probe (no de conectividad): ser indulgente,
+        # intentar igual y reportar.
         return True, f"No se pudo verificar el webhook previamente ({type(exc).__name__}): {exc}"
 
 
