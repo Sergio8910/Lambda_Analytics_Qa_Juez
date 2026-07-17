@@ -102,3 +102,47 @@ def test_verify_functional_no_violation_when_case_passes() -> None:
     }])
     resultados = [SyntheticTestResult(case_id="ok", passed=True, score=100, message="todo bien")]
     assert verify_functional_against_rules(report, resultados) == []
+
+
+def test_verify_functional_detecta_violacion_con_plural_singular_distinto() -> None:
+    """Antes, 'descuento' (mensaje) vs 'descuentos' (regla) no compartian
+    palabra exacta y ademas exigian 2+ solapes -- una violacion real de
+    negocio (dar 50% quedandose la regla en 'nunca mas del 10%') no se
+    detectaba. Ahora la normalizacion de plural + exigir 1 palabra NO
+    generica basta para capturarla."""
+    report = BusinessRulesReport(reglas=[{
+        "id": "RN-001",
+        "descripcion": "El agente nunca debe otorgar descuentos mayores al 10%.",
+        "origen": "explicito",
+        "confianza": "alta",
+    }])
+    resultados = [
+        SyntheticTestResult(
+            case_id="caso-descuento-01", passed=False, score=5,
+            message="El bot respondio con un descuento del 50% al cliente.",
+            findings=[],
+        )
+    ]
+    findings = verify_functional_against_rules(report, resultados)
+    assert findings
+    assert findings[0].severity == "critical"
+
+
+def test_verify_functional_no_dispara_solo_por_palabras_genericas() -> None:
+    """Dos casos que solo comparten palabras de dominio genericas
+    (agente/cliente/mensaje) sin ningun termino especifico en comun NO deben
+    marcarse como violacion -- evita ruido/falsos positivos."""
+    report = BusinessRulesReport(reglas=[{
+        "id": "RN-001",
+        "descripcion": "El agente debe responder al cliente con un mensaje claro.",
+        "origen": "explicito",
+        "confianza": "alta",
+    }])
+    resultados = [
+        SyntheticTestResult(
+            case_id="caso-no-relacionado", passed=False, score=10,
+            message="El agente le respondio al cliente en ingles en vez de espanol.",
+            findings=[],
+        )
+    ]
+    assert verify_functional_against_rules(report, resultados) == []

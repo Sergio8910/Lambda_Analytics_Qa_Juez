@@ -42,6 +42,14 @@ _RULE_LINE_PATTERNS = [
 ]
 _MAX_INFERRED_DOC_RULES = 30
 _STOPWORDS_MIN_LEN = 4
+# Palabras de dominio tan comunes en cualquier regla de negocio que solaparlas
+# solas no es evidencia de relacion real entre la regla y el resultado del
+# caso sintetico (ej. "agente"/"cliente" aparecen en casi cualquier oracion).
+_PALABRAS_GENERICAS = {
+    "agente", "cliente", "clientes", "usuario", "usuarios", "bot", "sistema",
+    "negocio", "empresa", "mensaje", "mensajes", "respuesta", "respuestas",
+    "flujo", "caso", "casos", "conversacion", "conversaciones", "servicio",
+}
 
 
 class BusinessRule(BaseModel):
@@ -205,8 +213,22 @@ def business_rules_worker_findings(
     return findings, report
 
 
+def _normalizar(palabra: str) -> str:
+    """Normalizacion ligera (no NLP real): quita un sufijo plural simple para
+    que 'descuento'/'descuentos' o 'regla'/'reglas' compartan la misma clave.
+    Reduce falsos negativos del cruce por solapamiento EXACTO de palabras
+    entre la descripcion de una regla y el mensaje de un caso fallido."""
+    if palabra.endswith("es") and len(palabra) > _STOPWORDS_MIN_LEN + 1:
+        return palabra[:-2]
+    if palabra.endswith("s") and len(palabra) > _STOPWORDS_MIN_LEN:
+        return palabra[:-1]
+    return palabra
+
+
 def _keywords(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-záéíóúñ]+", text.lower()) if len(w) >= _STOPWORDS_MIN_LEN}
+    return {
+        _normalizar(w) for w in re.findall(r"[a-záéíóúñ]+", text.lower()) if len(w) >= _STOPWORDS_MIN_LEN
+    }
 
 
 def verify_functional_against_rules(
@@ -215,9 +237,10 @@ def verify_functional_against_rules(
 ) -> list[NormalizedFinding]:
     """Cruza casos sinteticos fallidos contra reglas EXPLICITAS (alta confianza).
 
-    Heuristica de solapamiento de palabras clave -- honesto: no hay ejecucion
-    real de flujo aqui, es deteccion de contradiccion por texto, igual que el
-    resto de los chequeos estaticos de La Colmena.
+    Heuristica de solapamiento de palabras clave (normalizadas, sin palabras
+    genericas de dominio) -- honesto: no hay ejecucion real de flujo aqui, es
+    deteccion de contradiccion por texto, igual que el resto de los chequeos
+    estaticos de La Colmena.
     """
     alta = rules_report.alta_confianza()
     if not alta:
@@ -236,8 +259,8 @@ def verify_functional_against_rules(
                 # si la regla declara un componente, exigimos que aparezca mencionado
                 if regla.componente_relacionado.lower() not in res.case_id.lower():
                     continue
-            solapadas = palabras_regla & _keywords(texto)
-            if len(solapadas) < 2:
+            solapadas = (palabras_regla & _keywords(texto)) - _PALABRAS_GENERICAS
+            if not solapadas:
                 continue
             findings.append(builder.make(
                 severity="critical",

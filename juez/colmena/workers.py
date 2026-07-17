@@ -9,7 +9,16 @@ from pathlib import Path
 from .models import NormalizedFinding, ProjectInventory
 
 _SECRET_RE = re.compile(
-    r"(?i)(api[_-]?key|secret|token|password|passwd|private[_-]?key)\s*[:=]\s*['\"]?([A-Za-z0-9_\-./+=]{12,})"
+    r"(?i)\b[a-z_]{0,30}(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|"
+    r"private[_-]?key|credentials?|auth|clave|secreto|contrase[nñ]a|key)[a-z_]{0,20}"
+    r"\s*(?::\s*[\w\[\], .]{1,20}\s*)?[:=]\s*['\"]?([A-Za-z0-9_\-./+=]{12,})"
+)
+# Secretos reales pasados como valor por defecto de una variable de entorno,
+# ej. `os.environ.get("KEY", "sk-proj-...")` -- el regex generico de arriba
+# NO los detecta porque el nombre sensible (KEY) esta en el primer argumento,
+# no inmediatamente antes del valor real.
+_ENV_DEFAULT_SECRET_RE = re.compile(
+    r"(?i)(?:os\.(?:environ\.get|getenv)|getenv)\s*\(\s*['\"][A-Z0-9_]+['\"]\s*,\s*['\"]([A-Za-z0-9_\-./+=]{12,})['\"]"
 )
 _PRIVATE_URL_RE = re.compile(
     r"(169\.254\.169\.254|metadata\.google\.internal|localhost|127\.0\.0\.1|0\.0\.0\.0|"
@@ -107,14 +116,33 @@ class BaseWorker:
                 continue
 
 
+def _valor_secreto_plausible(line: str, match: re.Match) -> bool:
+    """Filtra falsos positivos del regex generico de secretos: el valor
+    capturado debe verse como un secreto real (contiene al menos un digito)
+    y no ser una llamada a funcion/atributo (ej. `api_key = load_from_vault()`
+    o `api_key = os.environ.get(...)`, donde el regex capturaria el nombre de
+    la funcion/metodo, no un valor literal)."""
+    valor = match.group(1)
+    if not any(c.isdigit() for c in valor):
+        return False
+    fin = match.end(1)
+    return not (fin < len(line) and line[fin] == "(")
+
+
 class SecurityWorker(BaseWorker):
     source = "security_worker"
 
     def run(self) -> list[NormalizedFinding]:
         out: list[NormalizedFinding] = []
-        for rel, text in self.text_files({".py", ".json", ".yml", ".yaml", ".env", ".toml", ".md"}):
+        # Incluye .txt: los prompts de agente (el asset mas evaluado por el
+        # Juez) se materializan como .txt, y un secreto pegado dentro del
+        # system prompt (comun cuando un agente "explica" como llamar una
+        # API) antes quedaba invisible para este worker.
+        for rel, text in self.text_files({".py", ".json", ".yml", ".yaml", ".env", ".toml", ".md", ".txt"}):
+            es_ejemplo = "example" in rel.lower()
             for line_no, line in enumerate(text.splitlines(), start=1):
-                if _SECRET_RE.search(line) and "example" not in rel.lower():
+                m = _SECRET_RE.search(line)
+                if m and _valor_secreto_plausible(line, m) and not es_ejemplo:
                     out.append(self.f.make(
                         severity="critical",
                         category="security",
@@ -125,6 +153,24 @@ class SecurityWorker(BaseWorker):
                         evidence=line.strip(),
                         impact="Puede exponer credenciales reales o tokens de acceso.",
                         recommendation="Mover secretos a variables de entorno o gestor de secretos y rotarlos si son reales.",
+                        source=self.source,
+                    ))
+                m_env = _ENV_DEFAULT_SECRET_RE.search(line)
+                if m_env and not es_ejemplo:
+                    out.append(self.f.make(
+                        severity="critical",
+                        category="security",
+                        title="Secreto real como valor por defecto de una variable de entorno",
+                        description=(
+                            "Se detecto un valor con forma de secreto real usado como fallback de "
+                            "os.environ.get()/getenv() -- si la variable de entorno no esta seteada, "
+                            "el codigo usa este valor embebido en vez de fallar."
+                        ),
+                        file=rel,
+                        line=line_no,
+                        evidence=line.strip(),
+                        impact="El fallback puede ser una credencial real que queda expuesta en el repo.",
+                        recommendation="Eliminar el valor por defecto (que falle si falta la env var) y rotar el secreto si es real.",
                         source=self.source,
                     ))
                 if _PRIVATE_URL_RE.search(line):

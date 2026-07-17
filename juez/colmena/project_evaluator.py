@@ -14,6 +14,7 @@ from .workers import evaluate_project_workers
 
 _CATEGORY_WEIGHTS = {
     "security": 30.0,
+    "business_rule": 30.0,
     "api": 10.0,
     "workflow": 10.0,
     "architecture": 15.0,
@@ -27,6 +28,21 @@ _CATEGORY_WEIGHTS = {
     "maintainability": 10.0,
 }
 _SEVERITY_IMPACT = {"critical": 1.0, "high": 0.45, "medium": 0.18, "low": 0.06, "info": 0.0}
+# Tope de la penalizacion TOTAL de una categoria, como multiplo de su peso
+# nominal. Antes era 1x el peso (`min(weight, penalty)`): un solo finding
+# critical ya agota ese tope (weight * 1.0 == weight), asi que 1 vs 40
+# findings critical en la misma categoria penalizaban exactamente igual.
+# Con 4x, findings adicionales de la misma categoria siguen costando hasta
+# ese multiplo, reflejando que un problema sistemico (repetido) es mas grave
+# que uno aislado, sin permitir que una sola categoria borre todo el score.
+_CATEGORY_PENALTY_CAP_MULTIPLIER = 4.0
+# Categorias que, con un finding critical, bloquean el proyecto directo
+# (status = blocked_by_critical_findings) sin importar el score numerico.
+# security ya estaba; business_rule se agrega porque una violacion critica de
+# una regla de negocio explicita del cliente es, para el negocio, tan grave
+# como un hueco de seguridad -- no debe poder "promediarse" con otras
+# categorias sanas y salir con un score alto.
+_CATEGORIAS_BLOQUEANTES = {"security", "business_rule"}
 
 
 _WEBHOOKS_FILENAMES = ("webhooks_n8n.json",)
@@ -145,12 +161,18 @@ def score_project(findings: list[NormalizedFinding]) -> ProjectScore:
         penalties_by_category[finding.category] = penalties_by_category.get(finding.category, 0.0) + (
             weight * _SEVERITY_IMPACT[finding.severity]
         )
-    weighted_penalty = min(100.0, sum(min(_CATEGORY_WEIGHTS.get(cat, 5.0), penalty) for cat, penalty in penalties_by_category.items()))
+    weighted_penalty = min(
+        100.0,
+        sum(
+            min(_CATEGORY_WEIGHTS.get(cat, 5.0) * _CATEGORY_PENALTY_CAP_MULTIPLIER, penalty)
+            for cat, penalty in penalties_by_category.items()
+        ),
+    )
     score = round(max(0.0, 100.0 - weighted_penalty), 1)
-    critical_security = any(f.severity == "critical" and f.category == "security" for f in findings)
+    critical_bloqueante = any(f.severity == "critical" and f.category in _CATEGORIAS_BLOQUEANTES for f in findings)
     critical_count = by_severity.get("critical", 0)
     high_count = by_severity.get("high", 0)
-    if critical_security:
+    if critical_bloqueante:
         status = "blocked_by_critical_findings"
     elif critical_count:
         status = "not_ready_for_production"
