@@ -1892,3 +1892,73 @@ def run_proyecto_self_heal(
             shutil.rmtree(root_tmp, ignore_errors=True)
     finally:
         _restaurar_env(previo_env)
+
+
+# =============================================================================
+# CERTIFICACIÓN — ciclo analizar->evaluar->construir->iterar->certificar
+# =============================================================================
+
+
+def run_certificacion(
+    nombre: str = "Proyecto",
+    prompt: str = "",
+    n8n_flows: Optional[List[Dict[str, Any]]] = None,
+    reglas_negocio: Optional[List[str]] = None,
+    objetivos: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    max_rondas: int = 4,
+    incluir_dinamicas: bool = False,
+    auto_fix: bool = True,
+    min_confidence: float = 0.85,
+    max_lines_per_fix: int = 40,
+    enable_generic_fixer: bool = False,
+    openai_key: str = "",
+    n8n_api_key: str = "",
+    n8n_base_url: str = "",
+    progress_cb: Optional[Callable[[str, int], None]] = None,
+) -> Dict[str, Any]:
+    """Corre el ciclo completo de La Colmena sobre el proyecto: analiza, evalúa
+    en todas las dimensiones, construye fixes (self-heal), re-evalúa e itera
+    hasta CONVERGER, y emite un CERTIFICADO consciente de cobertura.
+
+    Igual que self-heal, opera sobre un proyecto temporal efímero (nunca un repo
+    real): lo único que el self-heal puede tocar es ese directorio descartable.
+    """
+    from juez.colmena.orquestador import certificar_proyecto
+
+    n8n_flows = n8n_flows or []
+    prompt = (prompt or "").strip()
+    if not prompt and not n8n_flows:
+        raise ValueError("La certificación necesita al menos un 'prompt' o un flujo n8n.")
+
+    progress = progress_cb or _progress_noop
+    previo_env = _setear_env_temporal(openai_key=openai_key, n8n_api_key=n8n_api_key, n8n_base_url=n8n_base_url)
+    try:
+        progress("Preparando componentes del proyecto", 5)
+        componentes_n8n: List[tuple] = []
+        for flow in n8n_flows:
+            try:
+                wf, _webhook, wf_nombre = _resolve_n8n_flow(flow, n8n_api_key, n8n_base_url)
+                componentes_n8n.append((wf_nombre, wf))
+            except Exception:
+                pass
+
+        root_tmp = _construir_proyecto_temporal(prompt, componentes_n8n, reglas_negocio, objetivos)
+        try:
+            progress("Ejecutando ciclo analizar->evaluar->construir->iterar", 30)
+            certificado = certificar_proyecto(
+                root_tmp,
+                max_rondas=max_rondas,
+                incluir_dinamicas=incluir_dinamicas,
+                auto_fix=auto_fix,
+                min_confidence=min_confidence,
+                max_lines_per_fix=max_lines_per_fix,
+                enable_generic_fixer=enable_generic_fixer,
+                output_dir=root_tmp / "_cert_output",
+            )
+            certificado["nombre"] = nombre or "Proyecto"
+            progress("Listo", 100)
+            return certificado
+        finally:
+            shutil.rmtree(root_tmp, ignore_errors=True)
+    finally:
+        _restaurar_env(previo_env)

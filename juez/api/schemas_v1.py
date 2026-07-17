@@ -274,6 +274,34 @@ class SelfHealResponse(BaseModel):
 
 
 # =============================================================================
+# CERTIFICACIÓN — ciclo analizar->evaluar->construir->iterar->certificar
+# =============================================================================
+
+
+class CertificacionRequest(BaseModel):
+    """Corre el ciclo completo de La Colmena sobre el proyecto: analiza, evalúa
+    en todas las dimensiones, construye fixes (self-heal), re-evalúa e itera
+    hasta CONVERGER, y emite un CERTIFICADO consciente de cobertura. Opera sobre
+    un proyecto temporal efímero (nunca un repo real).
+    """
+
+    nombre: str = Field("Proyecto", description="Nombre del proyecto")
+    prompt: str = Field("", description="System prompt actual del agente")
+    n8n_flows: List[N8nFlowSource] = Field(default_factory=list, description="Flujos n8n del proyecto")
+    reglas_negocio: List[str] = Field(default_factory=list, description="Reglas de negocio explícitas")
+    objetivos: Optional[Dict[str, List[Dict[str, Any]]]] = Field(None, description="Objetivos declarados por flujo n8n")
+    max_rondas: int = Field(4, ge=1, le=10, description="Máximo de rondas construir/re-evaluar antes de parar")
+    incluir_dinamicas: bool = Field(False, description="Incluye obreras dinámicas (adversarial/edge/propósito). Cuesta tokens.")
+    auto_fix: bool = Field(True, description="Si False, solo analiza+evalúa+certifica sin intentar construir fixes.")
+    min_confidence: float = Field(0.85, ge=0.0, le=1.0, description="Confianza mínima para aplicar un fix")
+    max_lines_per_fix: int = Field(40, ge=1, le=500, description="Máximo de líneas que un fix puede cambiar")
+    enable_generic_fixer: bool = Field(False, description="Fixer genérico (LLM en sandbox). Más caro/lento.")
+    openai_key: Optional[str] = None
+    n8n_api_key: Optional[str] = None
+    n8n_base_url: Optional[str] = None
+
+
+# =============================================================================
 # MONITOREO PROGRAMADO — evaluaciones recurrentes con historial
 # =============================================================================
 
@@ -346,7 +374,7 @@ class MonitorUpdateRequest(BaseModel):
 
 
 JobStatus = Literal["queued", "running", "completed", "failed"]
-JobKind = Literal["elevenlabs", "n8n", "pipeline", "proyecto", "failure", "self_heal"]
+JobKind = Literal["elevenlabs", "n8n", "pipeline", "proyecto", "failure", "self_heal", "certificacion"]
 
 
 class JobCreatedResponse(BaseModel):

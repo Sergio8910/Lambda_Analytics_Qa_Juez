@@ -13,6 +13,7 @@ from juez.api.jobs import get_store
 from juez.api.monitor_store import get_monitor_store
 from juez.api.reference_store import get_reference_store
 from juez.api.runner import (
+    run_certificacion,
     run_elevenlabs_single,
     run_n8n_single,
     run_pipeline,
@@ -36,6 +37,7 @@ from juez.api.schemas_v1 import (
     MonitorResponse,
     MonitorUpdateRequest,
     N8nFailurePayload,
+    CertificacionRequest,
     SelfHealRequest,
     VerifyObjectivesRequest,
 )
@@ -358,6 +360,56 @@ def self_heal_proyecto(req: SelfHealRequest) -> Dict[str, Any]:
     return {
         "job_id": job_id,
         "kind": "self_heal",
+        "status": "queued",
+        "created_at": job["created_at"],
+        "poll_url": f"/api/v1/evaluate/{job_id}",
+    }
+
+
+@router.post("/proyecto/certificar", response_model=JobCreatedResponse, status_code=202)
+def certificar_proyecto_endpoint(req: CertificacionRequest) -> Dict[str, Any]:
+    """Ciclo completo de La Colmena: analiza -> evalúa (todas las dimensiones) ->
+    construye fixes (self-heal) -> re-evalúa -> itera hasta CONVERGER, y emite un
+    CERTIFICADO consciente de cobertura (solo certifica 'todo bien' sobre lo que
+    realmente se evaluó).
+
+    El resultado trae: veredicto (CERTIFICADO / CERTIFICADO_CON_OBSERVACIONES /
+    NO_CERTIFICADO), score inicial->final, las rondas del ciclo, por qué paró
+    (convergencia / sin críticos / máx rondas), hallazgos restantes, cobertura y
+    lo que requiere revisión humana. Opera sobre un proyecto temporal efímero.
+    """
+    if not req.prompt.strip() and not req.n8n_flows:
+        raise HTTPException(
+            status_code=400,
+            detail="La certificación necesita al menos 'prompt' o 'n8n_flows'.",
+        )
+
+    store = get_store()
+    job = store.create(kind="certificacion", params=req.model_dump(mode="json"))
+    job_id = job["job_id"]
+
+    store.run_in_thread(
+        job_id,
+        run_certificacion,
+        nombre=req.nombre,
+        prompt=req.prompt,
+        n8n_flows=[f.model_dump(mode="json") for f in req.n8n_flows],
+        reglas_negocio=req.reglas_negocio,
+        objetivos=req.objetivos,
+        max_rondas=req.max_rondas,
+        incluir_dinamicas=req.incluir_dinamicas,
+        auto_fix=req.auto_fix,
+        min_confidence=req.min_confidence,
+        max_lines_per_fix=req.max_lines_per_fix,
+        enable_generic_fixer=req.enable_generic_fixer,
+        openai_key=req.openai_key or "",
+        n8n_api_key=req.n8n_api_key or "",
+        n8n_base_url=req.n8n_base_url or "",
+    )
+
+    return {
+        "job_id": job_id,
+        "kind": "certificacion",
         "status": "queued",
         "created_at": job["created_at"],
         "poll_url": f"/api/v1/evaluate/{job_id}",
