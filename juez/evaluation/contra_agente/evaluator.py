@@ -172,51 +172,66 @@ def _build_context_memory_criteria(history: List[Dict[str, str]], turn_id: int) 
     )
 
 
+_JUEZ_MAX_INTENTOS = 2
+
+
 def _eval_with_llm(
     criteria: str,
     user_message: str,
     agent_response: str,
     model: str = "gpt-4o-mini",
     openai_key: str = "",
-) -> tuple[float, str]:
-    """Llama a OpenAI para evaluar con el criterio dado. Retorna (score, reason)."""
+) -> tuple[Optional[float], str]:
+    """Llama a OpenAI para evaluar con el criterio dado. Retorna (score, reason).
+
+    score None = el JUEZ no pudo evaluar (LLM caido/rate-limit tras reintentos,
+    o JSON sin score). Antes esto devolvia 0.5, que con threshold 0.65 contaba
+    como FALLO -> un hipo del juez convertia turnos buenos en fallos en
+    silencio. Ahora None significa 'no evaluado' y el turno se EXCLUYE del
+    promedio en vez de contaminarlo.
+    """
     if not openai_key:
         if agent_response and not agent_response.startswith("[ERROR"):
             return 0.5, "Sin OPENAI_API_KEY — score heurístico 0.5"
         return 0.1, "Sin OPENAI_API_KEY — respuesta vacía o error"
 
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=openai_key)
+    prompt = (
+        f"{criteria}\n\n"
+        f"MENSAJE DEL USUARIO: {user_message}\n\n"
+        f"RESPUESTA DEL AGENTE: {agent_response}\n\n"
+        "REGLA DE SCORING OBLIGATORIA: usa SOLO dos valores posibles.\n"
+        "  • 0.9 si el agente cumplió (éxito claro)\n"
+        "  • 0.1 si el agente falló (fallo claro)\n"
+        "Nunca uses 0.5, 0.6, 0.7 ni ningún valor intermedio. "
+        "Si tu razonamiento concluye que el agente lo hizo bien, el score DEBE ser 0.9. "
+        "Si concluye que falló, DEBE ser 0.1. No hay términos medios.\n\n"
+        "Responde SOLO con JSON: {\"score\": <0.9 o 0.1>, \"reason\": \"<explicación en español>\"}"
+    )
+    import json
 
-        prompt = (
-            f"{criteria}\n\n"
-            f"MENSAJE DEL USUARIO: {user_message}\n\n"
-            f"RESPUESTA DEL AGENTE: {agent_response}\n\n"
-            "REGLA DE SCORING OBLIGATORIA: usa SOLO dos valores posibles.\n"
-            "  • 0.9 si el agente cumplió (éxito claro)\n"
-            "  • 0.1 si el agente falló (fallo claro)\n"
-            "Nunca uses 0.5, 0.6, 0.7 ni ningún valor intermedio. "
-            "Si tu razonamiento concluye que el agente lo hizo bien, el score DEBE ser 0.9. "
-            "Si concluye que falló, DEBE ser 0.1. No hay términos medios.\n\n"
-            "Responde SOLO con JSON: {\"score\": <0.9 o 0.1>, \"reason\": \"<explicación en español>\"}"
-        )
-
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=200,
-            temperature=0.0,
-            response_format={"type": "json_object"},
-        )
-        import json
-        data = json.loads(resp.choices[0].message.content or "{}")
-        score = float(data.get("score", 0.5))
-        score = max(0.0, min(1.0, score))
-        reason = str(data.get("reason", "Sin razón"))
-        return score, reason
-    except Exception as exc:
-        return 0.5, f"Error en evaluación LLM: {exc}"
+    ultimo_error = ""
+    for _intento in range(_JUEZ_MAX_INTENTOS):
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=200,
+                temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+            data = json.loads(resp.choices[0].message.content or "{}")
+            if "score" not in data:
+                ultimo_error = "el juez no devolvio un campo 'score'"
+                continue
+            score = max(0.0, min(1.0, float(data["score"])))
+            return score, str(data.get("reason", "Sin razón"))
+        except Exception as exc:
+            ultimo_error = f"{type(exc).__name__}: {exc}"
+    # Tras reintentos, el juez no pudo evaluar: NO inventar 0.5 (seria un fallo
+    # falso). Devolver None => el turno se excluye del score, con rastro visible.
+    return None, f"[no evaluado] el juez no pudo puntuar: {ultimo_error}"
 
 
 class TurnEvaluator:
@@ -256,12 +271,21 @@ class TurnEvaluator:
                 category=category,
                 latency_ms=latency_ms,
             )
-            scores[metric] = score
+            # score None = el juez no pudo evaluar esa metrica: se EXCLUYE del
+            # promedio (no se inyecta 0.5) para no convertir un fallo del juez
+            # en un fallo falso del agente.
+            if score is not None:
+                scores[metric] = score
             reasons.append(f"{metric}: {reason}")
 
-        # Score del turno = promedio de métricas
-        overall = sum(scores.values()) / len(scores) if scores else 0.5
-        passed = overall >= self.threshold
+        evaluated = bool(scores)
+        if evaluated:
+            overall = sum(scores.values()) / len(scores)
+            passed = overall >= self.threshold
+        else:
+            # Ninguna metrica se pudo evaluar (juez caido para todas): el turno
+            # queda 'no evaluado' -> se excluye del score de la conversacion.
+            passed = False
 
         reason_combined = " | ".join(reasons) if reasons else "Sin evaluación"
 
@@ -274,6 +298,7 @@ class TurnEvaluator:
             scores=scores,
             passed=passed,
             reason=reason_combined[:500],
+            evaluated=evaluated,
             adaptive_branch_taken=adaptive_branch,
             message_fragments=message_fragments,
         )

@@ -127,6 +127,9 @@ def evaluate_project_path(
                 cost_summary = summary
 
     score = score_project(findings)
+    coverage = _compute_coverage(
+        root, inventory, rules_report, incluir_dinamicas=incluir_dinamicas,
+    )
     return ProjectEvaluationReport(
         project_id=project_id or root.name,
         root_path=str(root),
@@ -140,7 +143,102 @@ def evaluate_project_path(
         legacy_component_score=legacy_score,
         legacy_component_findings=legacy_findings,
         dynamic_cost_summary=cost_summary,
+        coverage=coverage,
     )
+
+
+def _compute_coverage(root, inventory, rules_report, *, incluir_dinamicas: bool) -> dict[str, Any]:
+    """Indice de cobertura: por cada dimension de analisis, si se EVALUO, se
+    OMITIO (con motivo + como activarla) o NO_APLICA. Se deriva de hechos
+    estructurados (manifiestos presentes, assets detectados, flags), no de
+    adivinar por los titulos de los hallazgos.
+
+    El objetivo es que el consumidor NUNCA confunda 'sin hallazgos' con 'todo
+    revisado': aqui ve exactamente que quedo fuera y como cerrar el hueco.
+    """
+    from .business_rules import load_declared_purposes
+
+    assets = inventory.detected_assets
+    tiene_prompts = bool(assets.get("prompts") or assets.get("agents"))
+    tiene_flujos = bool(assets.get("workflows"))
+    tiene_reglas = bool(rules_report.alta_confianza())
+    objetivos_declarados = bool(_load_declared_objectives(root))
+    propositos_declarados = bool(load_declared_purposes(root))
+    archivos_omitidos = sum(1 for a in inventory.assets if a.kind == "skipped_large_file")
+
+    def dim(estado: str, motivo: str = "", como_activar: str = "") -> dict[str, str]:
+        d = {"estado": estado}
+        if motivo:
+            d["motivo"] = motivo
+        if como_activar:
+            d["como_activar"] = como_activar
+        return d
+
+    dimensiones: dict[str, dict[str, str]] = {}
+    # Seguridad estatica y arquitectura corren siempre.
+    dimensiones["seguridad_estatica"] = dim("evaluada")
+    dimensiones["arquitectura_calidad"] = dim("evaluada")
+
+    dimensiones["inyeccion_prompt"] = (
+        dim("evaluada") if tiene_prompts
+        else dim("no_aplica", "El proyecto no tiene prompts/agentes detectados.")
+    )
+    dimensiones["reglas_negocio"] = (
+        dim("evaluada") if tiene_reglas
+        else dim("omitida", "No hay reglas de negocio explicitas de alta confianza.",
+                 "Subir reglas_negocio.json con las reglas del cliente.")
+    )
+    if tiene_flujos:
+        dimensiones["objetivos_flujos"] = (
+            dim("evaluada") if objetivos_declarados
+            else dim("omitida", "Los flujos n8n no declaran objetivos a verificar.",
+                     "Subir objetivos_flujos.json (que debe lograr cada flujo).")
+        )
+    else:
+        dimensiones["objetivos_flujos"] = dim("no_aplica", "El proyecto no tiene flujos n8n.")
+
+    if tiene_prompts:
+        if not incluir_dinamicas:
+            dimensiones["proposito_agente"] = dim(
+                "omitida", "Analisis dinamico desactivado (incluir_dinamicas=False).",
+                "Correr con incluir_dinamicas=True (usa el LLM, cuesta tokens).")
+        elif not propositos_declarados:
+            dimensiones["proposito_agente"] = dim(
+                "omitida", "No se declaro el proposito esperado de cada agente.",
+                "Agregar 'proposito_por_componente' en reglas_negocio.json.")
+        else:
+            dimensiones["proposito_agente"] = dim("evaluada")
+
+    dimensiones["conversaciones_dinamicas"] = (
+        dim("evaluada") if incluir_dinamicas
+        else dim("omitida", "No se corrieron conversaciones dinamicas.",
+                 "Correr con incluir_dinamicas=True o via /evaluate/proyecto con conversaciones.")
+    )
+
+    if archivos_omitidos:
+        dimensiones["cobertura_archivos"] = dim(
+            "parcial", f"{archivos_omitidos} archivo(s) >2MB no analizados.",
+            "Reducir su tamano (quitar datos embebidos) o analizarlos aparte.")
+    else:
+        dimensiones["cobertura_archivos"] = dim("completa")
+
+    omitidas = [k for k, v in dimensiones.items() if v["estado"] == "omitida"]
+    parciales = [k for k, v in dimensiones.items() if v["estado"] in {"parcial"}]
+    evaluadas = [k for k, v in dimensiones.items() if v["estado"] in {"evaluada", "completa"}]
+    return {
+        "completa": not omitidas and not parciales,
+        "dimensiones": dimensiones,
+        "resumen": {
+            "evaluadas": len(evaluadas),
+            "omitidas": len(omitidas),
+            "parciales": len(parciales),
+            "omitidas_detalle": [
+                {"dimension": k, "motivo": dimensiones[k].get("motivo", ""),
+                 "como_activar": dimensiones[k].get("como_activar", "")}
+                for k in omitidas + parciales
+            ],
+        },
+    }
 
 
 def _new_cost_meter():

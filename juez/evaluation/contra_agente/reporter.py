@@ -429,7 +429,8 @@ def _causa_legible(cr: ConversationResult, api_health: Optional[Dict] = None) ->
                 worst_turn = t
 
     if worst_turn:
-        worst_metric = min(worst_turn.scores, key=worst_turn.scores.get)
+        # scores puede estar vacio si el turno no se pudo evaluar (juez caido).
+        worst_metric = min(worst_turn.scores, key=worst_turn.scores.get) if worst_turn.scores else "no_evaluado"
         if worst_metric == "task_success" and cr.category in _METRICA_FALLO_ADVERSARIAL:
             razon_metrica = _METRICA_FALLO_ADVERSARIAL[cr.category]
         else:

@@ -107,6 +107,10 @@ class TurnResult(BaseModel):
     scores: Dict[str, float]
     passed: bool
     reason: str
+    # False = el turno no se pudo evaluar (juez caido/rate-limit tras reintentos,
+    # o fallo de transporte del agente). Se EXCLUYE del score de la conversacion
+    # en vez de contarse como fallo -- evita veredictos falsos por hipos de red.
+    evaluated: bool = True
     adaptive_branch_taken: Optional[str] = None
     message_fragments: Optional[List[str]] = None  # fragmentos si fue turno fragmentado
     transport_debug: Optional[Dict[str, Any]] = None

@@ -1628,6 +1628,7 @@ def run_proyecto(
 
         # â”€â”€ 2) La Colmena (construcciÃ³n, capa MODERNA) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         colmena = None
+        cobertura: Dict[str, Any] = {}
         if prompt or componentes_n8n:
             progress("Analizando la construcciÃ³n del proyecto", 25)
             root_tmp = _construir_proyecto_temporal(prompt, componentes_n8n, reglas_negocio, objetivos)
@@ -1636,6 +1637,7 @@ def run_proyecto(
                     root_tmp, project_id=nombre or "proyecto", incluir_dinamicas=incluir_dinamicas,
                 )
                 colmena = _project_report_a_colmena_legacy(project_report)
+                cobertura = dict(getattr(project_report, "coverage", {}) or {})
             finally:
                 shutil.rmtree(root_tmp, ignore_errors=True)
 
@@ -1693,6 +1695,22 @@ def run_proyecto(
         )
         contrato["informe_enfoques"] = _strip_non_serializable(informe_enfoques)
         contrato["reporte_txt"] = _render_informe_enfoques_txt(informe_enfoques)
+        # Indice de cobertura: que se evaluo y que quedo fuera (y como activarlo).
+        # Reconciliamos la dimension de conversaciones con lo que REALMENTE paso
+        # en run_proyecto (eje incluir_conversaciones, distinto del flag estatico).
+        if cobertura.get("dimensiones"):
+            corrio_conv = bool(conversacion) and not (isinstance(conversacion, dict) and conversacion.get("error"))
+            if corrio_conv:
+                cobertura["dimensiones"]["conversaciones_dinamicas"] = {"estado": "evaluada"}
+                resumen = cobertura.get("resumen", {})
+                resumen["omitidas_detalle"] = [
+                    d for d in resumen.get("omitidas_detalle", [])
+                    if d.get("dimension") != "conversaciones_dinamicas"
+                ]
+                resumen["omitidas"] = max(0, resumen.get("omitidas", 0) - 1)
+                resumen["evaluadas"] = resumen.get("evaluadas", 0) + 1
+                cobertura["completa"] = not resumen.get("omitidas") and not resumen.get("parciales")
+        contrato["cobertura"] = cobertura
         progress("Listo", 100)
         return contrato
     finally:
