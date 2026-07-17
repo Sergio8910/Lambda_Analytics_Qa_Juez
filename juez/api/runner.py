@@ -1558,6 +1558,59 @@ def _project_report_a_colmena_legacy(report) -> Any:
     return _ColmenaLegacyView(report)
 
 
+def _ejecucion_transparencia(
+    *,
+    modo_ejecucion: str,
+    incluir_conversaciones: bool,
+    incluir_dinamicas: bool,
+    hay_agentes: bool,
+    conversacion: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Declara, por CAPA, si el resultado salio de una ejecucion REAL contra el
+    agente o de una SIMULACION. Sin esto, un resultado simulado (sandbox / juez
+    que imagina la respuesta) se ve igual que uno real -- y confundir ambos es
+    justo lo que destruye la credibilidad de un juez. Es transparencia pura:
+    cada capa dice de donde viene su veredicto.
+    """
+    conv_ejecutada = bool(conversacion) and not (isinstance(conversacion, dict) and conversacion.get("error"))
+    conv_fallida = isinstance(conversacion, dict) and bool(conversacion.get("error"))
+
+    if not incluir_conversaciones or not hay_agentes:
+        conversaciones = "no_ejecutadas"
+        conv_desc = "No se corrieron conversaciones (solo analisis estatico de construccion)."
+    elif conv_fallida:
+        conversaciones = "fallida"
+        conv_desc = "Se intento ejecutar pero el agente/flujo fallo (ver flujos_fallidos)."
+    elif modo_ejecucion == "real":
+        conversaciones = "real"
+        conv_desc = "Ejecucion REAL: se disparo el webhook n8n / agente ElevenLabs de verdad."
+    else:
+        conversaciones = "simulado"
+        conv_desc = "Sandbox: el agente se SIMULA con un LLM; no se dispara el webhook real."
+
+    return {
+        "modo": modo_ejecucion if incluir_conversaciones else "sin_conversaciones",
+        "capas": {
+            "analisis_estatico": {
+                "tipo": "real",
+                "detalle": "Analisis determinista del prompt/flujo/codigo tal como esta escrito.",
+            },
+            "conversaciones": {"tipo": conversaciones, "detalle": conv_desc},
+            "obreras_dinamicas": {
+                "tipo": "simulado" if incluir_dinamicas else "no_ejecutadas",
+                "detalle": (
+                    "El LLM SIMULA la respuesta del agente y la juzga; no ejecuta el agente real."
+                    if incluir_dinamicas else "Obreras dinamicas desactivadas (incluir_dinamicas=False)."
+                ),
+            },
+        },
+        "nota": (
+            "Cada capa declara si su veredicto viene de ejecucion REAL o de SIMULACION. "
+            "'real' = se golpeo el agente/flujo de verdad; 'simulado' = un LLM imito su comportamiento."
+        ),
+    }
+
+
 def run_proyecto(
     nombre: str = "Proyecto",
     prompt: str = "",
@@ -1675,6 +1728,13 @@ def run_proyecto(
             openai_key=openai_key,
         )
         contrato["modo_ejecucion"] = modo_ejecucion if incluir_conversaciones else "sin_conversaciones"
+        contrato["ejecucion"] = _ejecucion_transparencia(
+            modo_ejecucion=modo_ejecucion,
+            incluir_conversaciones=incluir_conversaciones,
+            incluir_dinamicas=incluir_dinamicas,
+            hay_agentes=bool(eleven_ids or n8n_flows),
+            conversacion=conversacion,
+        )
         nodos_conversacion = []
         flujos_fallidos = []
         if isinstance(conversacion, dict):
