@@ -20,9 +20,15 @@ def _componente(nombre: str = "agente_atencion", prompt: str = "Eres un agente d
     return Componente(kind="prompt", nombre=nombre, prompt=prompt)
 
 
-def test_sin_proposito_declarado_no_genera_hallazgo():
+def test_sin_proposito_declarado_deja_rastro_visible_info():
+    """Sin proposito declarado ya NO se omite en silencio: deja un finding
+    'info' (no penaliza score) para que el reporte muestre que ese componente
+    no se verifico contra un proposito."""
     c = _componente()
-    assert pc.verificar_proposito(c, purposes={}, cost_meter=None) == []
+    hallazgos = pc.verificar_proposito(c, purposes={}, cost_meter=None)
+    assert len(hallazgos) == 1
+    assert hallazgos[0]["severidad"] == "info"
+    assert "NO verificado" in hallazgos[0]["descripcion"]
 
 
 def test_sin_llm_disponible_degrada_con_info(monkeypatch):

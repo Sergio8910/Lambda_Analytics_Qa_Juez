@@ -86,10 +86,15 @@ def test_objetivo_incumplido_genera_hallazgo_de_integracion_end_to_end() -> None
         assert "notificar_cliente" in textos or "Integraci" in textos
 
 
-def test_objetivo_incumplido_no_aparece_sin_manifiesto() -> None:
-    """Mismo flujo, sin manifiesto -> ningun hallazgo de Integracion (comportamiento actual)."""
+def test_sin_manifiesto_no_hay_violacion_pero_si_rastro_info() -> None:
+    """Sin manifiesto no debe aparecer una VIOLACION de objetivos (eso seria
+    un falso positivo), pero SI un rastro 'info' de que no se verifico -- el
+    reporte ya no omite en silencio que el flujo no se contrasto con objetivos."""
     with tempfile.TemporaryDirectory() as tmp:
         root = _project(Path(tmp), with_manifest=False)
         report = evaluate_project_path(root)
-        categorias = {h.get("categoria", "") for h in report.legacy_component_findings}
-        assert "Integración" not in categorias
+        integracion = [h for h in report.legacy_component_findings if h.get("obrera") == "Integración"]
+        # Hay rastro (info), pero ninguno de severidad de violacion.
+        assert integracion
+        assert all(h.get("severidad") == "info" for h in integracion)
+        assert any("NO verificados" in h.get("descripcion", "") for h in integracion)

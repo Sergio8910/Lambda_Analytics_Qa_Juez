@@ -44,6 +44,16 @@ def scan_project(root: Path | str) -> ProjectInventory:
 
     for path in _iter_files(root_path):
         rel = _rel(path, root_path)
+        # Guardia de tamano: NO leemos archivos enormes (memoria/tiempo), pero
+        # antes se saltaban en silencio -- un workflow n8n de >2MB no se
+        # analizaba y nadie se enteraba. Ahora queda como asset visible para
+        # que un worker emita el hallazgo correspondiente.
+        try:
+            if path.stat().st_size > 2_000_000:
+                assets.append(ProjectAsset(kind="skipped_large_file", path=rel, name=path.name))
+                continue
+        except OSError:
+            continue
         lower_name = path.name.lower()
         suffix = path.suffix.lower()
         text = _read_text(path)
@@ -107,8 +117,6 @@ def _iter_files(root: Path) -> Iterable[Path]:
         if path.is_dir():
             continue
         if any(part in _IGNORED_DIRS for part in path.relative_to(root).parts):
-            continue
-        if path.stat().st_size > 2_000_000:
             continue
         yield path
 

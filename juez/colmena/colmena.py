@@ -106,8 +106,14 @@ def _flujos(c: Componente) -> list[dict[str, Any]]:
 
 def _integracion(c: Componente) -> list[dict[str, Any]]:
     wf = _resolver_wf(c)
-    if not wf or not c.objetivos:
+    if not wf:
         return []
+    if not c.objetivos:
+        # Deja rastro visible (info, no penaliza) en vez de omitir en silencio
+        # que el flujo no se verifico contra objetivos declarados.
+        return [_h("Integración", "info",
+                   f"[{c.nombre}] objetivos NO verificados: el flujo no declara objetivos. "
+                   f"Declara objetivos_flujos.json para confirmar que el flujo cumple lo que promete.")]
     from juez.evaluation.n8n import Objective, verify_objectives
     rep = verify_objectives(wf, [Objective(**o) for o in c.objetivos])
     return [_h("Integración", f.severity, f"[{c.nombre}] {f.title}",

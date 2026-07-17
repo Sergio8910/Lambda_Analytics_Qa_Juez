@@ -76,7 +76,12 @@ def verificar_proposito(c, purposes: dict[str, str], cost_meter=None) -> list[di
         return []
     proposito = purposes.get(c.nombre)
     if not proposito:
-        return []  # sin proposito declarado, no hay contra que juzgar (por diseno)
+        # Antes: return [] silencioso. Ahora deja rastro visible (info, no
+        # penaliza score) para que el reporte nunca omita en silencio que el
+        # cumplimiento de proposito de este componente no se verifico.
+        return [_h("Proposito", "info",
+                   f"[{c.nombre}] cumplimiento de proposito NO verificado: sin proposito declarado. "
+                   f"Declara 'proposito_por_componente' en reglas_negocio.json para activarlo.")]
     if not _llm_disponible():
         return [_h("Proposito", "info",
                    f"[{c.nombre}] verificacion de proposito no ejecutada: falta OPENAI_API_KEY")]

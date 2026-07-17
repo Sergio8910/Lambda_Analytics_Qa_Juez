@@ -28,6 +28,32 @@ _PRIVATE_URL_RE = re.compile(
 )
 _HTTP_CALL_RE = re.compile(r"\b(requests|httpx)\.(get|post|put|patch|delete|request)\((?P<args>[^)]*)\)")
 
+# Jailbreak / prompt-injection: antes era substring literal de dos frases
+# ("ignora instrucciones" / "ignore previous instructions"), evadible con
+# cualquier variante. Cada patron cubre una FAMILIA de ataque (ES + EN):
+# desobedecer instrucciones, reasignar rol, activar "modo sin restricciones",
+# o exfiltrar el prompt/sistema.
+_PROMPT_INJECTION_RES = (
+    re.compile(r"(?i)\b(ignor[ae]|olvid[ae]|descart[ae])\b.{0,40}\b(instruc\w*|regl\w*|orden\w*|prompt|context\w*)"),
+    re.compile(r"(?i)\b(ignore|forget|disregard|override|bypass)\b.{0,40}\b(instruction|rule|prompt|context|previous|above|prior)"),
+    re.compile(r"(?i)\b(ahora eres|a partir de ahora eres|actua como si|finge que eres|haz de cuenta que eres)\b"),
+    re.compile(r"(?i)\b(you are now|from now on you are|act as|pretend (to be|you are)|roleplay as)\b"),
+    re.compile(r"(?i)\b(modo (desarrollador|dios|sin restricc\w*|libre)|developer mode|jailbreak|do anything now|\bDAN\b)"),
+    re.compile(r"(?i)\b(sin (restricc\w*|filtro|limit\w*|censura)|no tienes (restricc\w*|limit\w*)|without (restrictions?|filter|limits?|guardrails?))"),
+    re.compile(r"(?i)\b(revel[ae]|muestr[ae]|repite|dime)\b.{0,40}\b(system prompt|prompt del sistema|instrucc\w* internas?|tus instrucc\w*|reglas internas?)"),
+    re.compile(r"(?i)\b(reveal|show|print|repeat|leak)\b.{0,40}\b(system prompt|your (instructions?|prompt|rules)|initial prompt|hidden (instructions?|rules))"),
+)
+# Contexto DEFENSIVO: una linea que le dice al agente que RECHACE la inyeccion
+# ("rechaza jailbreaks", "no reveles instrucciones internas", "si te piden
+# ignorar instrucciones, rechazala") contiene el vocabulario del ataque pero
+# es exactamente lo contrario a una vulnerabilidad. Sin este guard, los propios
+# guardrails que agrega el self-heal se marcarian como inyeccion.
+_PROMPT_INJECTION_DEFENSIVE_RE = re.compile(
+    r"(?i)\b(rechaz\w*|declin\w*|reject|refuse|deny|"
+    r"no (revel\w*|obedez\w*|ignor\w*|sigas|compart\w*|acat\w*)|"
+    r"must not|do not|don't|never (reveal|obey|follow|share|ignore))\b"
+)
+
 
 class FindingBuilder:
     def __init__(self) -> None:
@@ -91,6 +117,23 @@ def evaluate_project_workers(root: Path, inventory: ProjectInventory) -> list[No
     findings.extend(DocumentationWorker(root, inventory, builder).run())
     findings.extend(DeploymentWorker(root, inventory, builder).run())
     findings.extend(TestingWorker(root, inventory, builder).run())
+    # Archivos omitidos por tamano: un componente no analizado no debe pasar
+    # como "sin hallazgos" -- se reporta como medium para que sea visible.
+    for asset in inventory.assets:
+        if asset.kind == "skipped_large_file":
+            findings.append(builder.make(
+                severity="medium",
+                category="maintainability",
+                title="Archivo no analizado por tamano (>2MB)",
+                description=(
+                    "El archivo supera el limite de 2MB y NO fue analizado. Si es un flujo n8n "
+                    "o codigo del proyecto, su contenido quedo fuera de la evaluacion."
+                ),
+                file=asset.path,
+                impact="Un componente sin analizar puede esconder problemas que el reporte no refleja.",
+                recommendation="Reducir el tamano (quitar datos de ejemplo embebidos) o analizarlo por separado.",
+                source="coverage_worker",
+            ))
     return sorted(findings, key=lambda f: (_severity_rank(f.severity), f.category, f.id))
 
 
@@ -343,8 +386,7 @@ class AgentPromptWorker(BaseWorker):
             # fragmento exacto para que el fixer pueda eliminarlo, no solo
             # agregar guardrails encima (causa raiz vs sintoma).
             for line_no, raw_line in enumerate(text.splitlines(), start=1):
-                lower_line = raw_line.lower()
-                if "ignora instrucciones" in lower_line or "ignore previous instructions" in lower_line:
+                if any(rx.search(raw_line) for rx in _PROMPT_INJECTION_RES) and not _PROMPT_INJECTION_DEFENSIVE_RE.search(raw_line):
                     out.append(self.f.make(
                         severity="high",
                         category="prompt",
