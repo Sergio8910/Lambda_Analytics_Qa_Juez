@@ -140,6 +140,11 @@ def _attach_artifact_verdict(
     # side-by-side esperado vs observado. El Verificador no lo devuelve.
     if isinstance(verdict, dict) and "expected_snapshot" not in verdict:
         verdict["expected_snapshot"] = expectation.expected_snapshot
+    # Transparencia: este PDF fue FABRICADO sinteticamente (no es el artefacto
+    # real que produciria el flujo del cliente). Etiquetarlo evita confundir una
+    # verificacion de artefacto sintetico con una del artefacto real.
+    if isinstance(verdict, dict):
+        verdict["artefacto_tipo"] = "sintetico"
     result.artifact_verdict = verdict
     return result
 
