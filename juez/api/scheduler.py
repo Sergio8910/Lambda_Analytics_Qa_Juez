@@ -90,6 +90,50 @@ class MonitorScheduler:
     def stop(self) -> None:
         self._stop.set()
 
+    def status(self) -> Dict[str, Any]:
+        """Salud del scheduler para observabilidad: si el thread vive, cada
+        cuánto revisa, cuántos monitores activos hay, cuáles están vencidos
+        ahora, sus próximas corridas y la última corrida/error de cada uno."""
+        store = get_monitor_store()
+        monitores = store.list(limit=500)
+        activos = [m for m in monitores if m.get("active")]
+        try:
+            due = store.due_monitors()
+        except Exception:
+            due = []
+        proximas = sorted(
+            (
+                {
+                    "id": m["id"],
+                    "nombre": m.get("config", {}).get("nombre", ""),
+                    "next_run_at": m.get("next_run_at"),
+                    "last_run_at": m.get("last_run_at"),
+                }
+                for m in activos
+                if m.get("next_run_at")
+            ),
+            key=lambda x: x["next_run_at"] or "",
+        )[:20]
+        errores = []
+        for m in monitores:
+            hist = m.get("historial") or []
+            if hist and hist[-1].get("status") == "failed":
+                errores.append({
+                    "id": m["id"],
+                    "nombre": m.get("config", {}).get("nombre", ""),
+                    "error": str(hist[-1].get("error", ""))[:200],
+                    "timestamp": hist[-1].get("timestamp"),
+                })
+        return {
+            "corriendo": bool(self._thread and self._thread.is_alive()),
+            "intervalo_poll_s": self.intervalo_s,
+            "monitores_totales": len(monitores),
+            "monitores_activos": len(activos),
+            "vencidos_ahora": [m["id"] for m in due],
+            "proximas_corridas": proximas,
+            "errores_recientes": errores[:20],
+        }
+
     def _loop(self) -> None:
         store = get_monitor_store()
         while not self._stop.is_set():

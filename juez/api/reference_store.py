@@ -69,6 +69,17 @@ class ReferenceDataStore:
             for e in entries[:limit]
         ]
 
+    def delete(self, dataset_id: str) -> bool:
+        """Elimina un dataset (memoria + disco). True si existía."""
+        with self._lock:
+            existia = self._entries.pop(dataset_id, None) is not None
+        if existia:
+            try:
+                (self.persist_dir / f"{dataset_id}.json").unlink(missing_ok=True)
+            except Exception:
+                pass
+        return existia
+
     def _persist(self, dataset_id: str) -> None:
         path = self.persist_dir / f"{dataset_id}.json"
         try:

@@ -575,6 +575,13 @@ def list_reference_data(limit: int = Query(50, ge=1, le=200)) -> Dict[str, Any]:
     return {"items": items, "total": len(items)}
 
 
+@router.delete("/reference-data/{dataset_id}", status_code=204)
+def delete_reference_data(dataset_id: str) -> None:
+    """Elimina un dataset de referencia por id (completa el CRUD)."""
+    if not get_reference_store().delete(dataset_id):
+        raise HTTPException(status_code=404, detail=f"Dataset no encontrado: {dataset_id}")
+
+
 # =============================================================================
 # MONITOREO PROGRAMADO — evaluaciones recurrentes con historial
 # =============================================================================
@@ -656,6 +663,17 @@ def run_monitor_now(monitor_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Monitor no encontrado: {monitor_id}")
     threading.Thread(target=ejecutar_monitor, args=(monitor,), daemon=True).start()
     return {"monitor_id": monitor_id, "status": "queued", "historial_url": f"/api/v1/monitors/{monitor_id}/historial"}
+
+
+@router.get("/scheduler/status", tags=["juez-v1"])
+def scheduler_status() -> Dict[str, Any]:
+    """Salud del scheduler de monitores (observabilidad): si el thread corre,
+    cada cuánto revisa, monitores activos, cuáles están vencidos ahora, próximas
+    corridas y los últimos errores. Para vigilar el monitoreo desde el escritorio
+    remoto sin abrir los JSON a mano."""
+    from juez.api.scheduler import get_scheduler
+
+    return get_scheduler().status()
 
 
 # =============================================================================

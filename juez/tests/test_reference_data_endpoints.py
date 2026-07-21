@@ -57,6 +57,20 @@ def test_ingest_y_luego_get_por_id(client: TestClient) -> None:
     assert resp2.json()["dataset"]["source_name"] == "clientes.csv"
 
 
+def test_ingest_y_delete(client: TestClient) -> None:
+    resp = client.post(
+        "/api/v1/reference-data/ingest",
+        files={"file": ("clientes.csv", io.BytesIO(b"a,b\n1,2\n"), "text/csv")},
+    )
+    dataset_id = resp.json()["id"]
+    assert client.delete(f"/api/v1/reference-data/{dataset_id}").status_code == 204
+    assert client.get(f"/api/v1/reference-data/{dataset_id}").status_code == 404
+
+
+def test_delete_inexistente_devuelve_404(client: TestClient) -> None:
+    assert client.delete("/api/v1/reference-data/no-existe").status_code == 404
+
+
 def test_get_id_inexistente_devuelve_404(client: TestClient) -> None:
     resp = client.get("/api/v1/reference-data/no-existe-este-id")
     assert resp.status_code == 404
