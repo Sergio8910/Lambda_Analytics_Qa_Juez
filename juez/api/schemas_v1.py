@@ -144,6 +144,8 @@ class EvalN8nRequest(BaseModel):
     modo_qa: Literal["tecnico", "funcional", "ambos"] = Field("ambos", description="Tipo de QA: tecnico (estructura/codigo/seguridad), funcional (objetivos/salida/negocio) o ambos.")
     artifact_agent_id: Optional[str] = Field(None, description="Override del agent_id usado para buscar la spec de artefacto")
     cubrir_caminos: bool = Field(False, description="Agrega escenarios dirigidos a cada rama del flujo (IF/Switch) para recorrer caminos distintos, no siempre el mismo. Para ramas gated por AI/HTTP usa steering semantico.")
+    conversaciones_reales: int = Field(0, ge=0, le=500, description="Cuantas conversaciones correr en modo REAL (dispara el webhook). Combinable con conversaciones_sinteticas; el reporte trae el desglose de cuantas de cada una.")
+    conversaciones_sinteticas: int = Field(0, ge=0, le=500, description="Cuantas conversaciones correr SINTETICAS (mock, sin tocar produccion). Si conversaciones_reales y conversaciones_sinteticas son 0, se usa total_conversaciones + modo_ejecucion (comportamiento clasico).")
 
 
 class EvalPipelineRequest(BaseModel):

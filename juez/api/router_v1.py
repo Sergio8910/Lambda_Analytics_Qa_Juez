@@ -218,6 +218,8 @@ def evaluate_n8n(req: EvalN8nRequest) -> Dict[str, Any]:
         artifact_agent_id=req.artifact_agent_id or "",
         modo_qa=req.modo_qa,
         cubrir_caminos=req.cubrir_caminos,
+        conversaciones_reales=req.conversaciones_reales,
+        conversaciones_sinteticas=req.conversaciones_sinteticas,
     )
 
     return {

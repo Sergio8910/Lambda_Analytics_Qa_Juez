@@ -268,6 +268,32 @@ def _batch_focus_summary(batch_result: Any) -> Dict[str, Any]:
     }
 
 
+def _desglose_ejecucion(batch_real: Any, batch_sintetico: Any) -> Dict[str, Any]:
+    """Desglose de cuántas pruebas corrieron REALES vs SINTÉTICAS, con su
+    resultado por grupo. Responde directo '¿cuántas de cada una?'."""
+    real = _batch_focus_summary(batch_real)
+    sint = _batch_focus_summary(batch_sintetico)
+
+    def _grupo(s: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "total": s["total"], "aprobadas": s["aprobadas"],
+            "fallidas": s["fallidas"], "pass_rate": s["pass_rate"],
+            "ejecutadas": s["ejecutadas"],
+        }
+
+    return {
+        "reales": _grupo(real),
+        "sinteticas": _grupo(sint),
+        "total_reales": real["total"],
+        "total_sinteticas": sint["total"],
+        "total_combinado": real["total"] + sint["total"],
+        "nota": (
+            "Desglose de la ejecución dinámica: 'reales' = disparó el webhook/agente de "
+            "verdad; 'sinteticas' = simuladas con mock (sin tocar producción)."
+        ),
+    }
+
+
 def _aggregate_pruebas_summary(nodos: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
     """Suma los `batch_summary` de los nodos de un pipeline/proyecto en un unico
     resumen de pruebas dinamicas (total/aprobadas/fallidas/pass_rate + evidencia).
@@ -937,6 +963,8 @@ def run_n8n_single(
     modo_ejecucion: str = "sandbox",
     reference_dataset_id: Optional[str] = None,
     cubrir_caminos: bool = False,
+    conversaciones_reales: int = 0,
+    conversaciones_sinteticas: int = 0,
     progress_cb: Optional[Callable[[str, int], None]] = None,
 ) -> Dict[str, Any]:
     """EvalÃºa un Ãºnico flujo n8n.
@@ -1004,50 +1032,54 @@ def run_n8n_single(
                 envelope_hint = mod.inferir_envelope_desde_wf(wf)
             except Exception:
                 envelope_hint = None
-        if total_conversaciones > 0 and webhook_url and oai_key:
-            if modo_ejecucion == "sandbox":
-                progress(f"Simulando {total_conversaciones} conversaciones", 65)
-                try:
-                    batch_result, reporte_ca = mod.ejecutar_contra_agente(
-                        analisis_n8n=analisis,
-                        webhook_url=webhook_url,
-                        agent_name=nombre,
-                        total_conv=total_conversaciones,
-                        concurrencia=concurrencia,
-                        escenarios_extra=escenarios or [],
-                        modo_ejecucion="sandbox",
-                        payload_template=payload_template,
-                        envelope_hint=envelope_hint,
-                    )
-                    webhook_activo_msg = "sandbox: webhook no invocado"
-                except Exception as exc:
-                    reporte_ca = f"\n[CONTRA-AGENTE - Error: {exc}]\n"
-            else:
+        desglose_ejecucion = None
+
+        def _correr(total_conv: int, modo: str, etiqueta: str):
+            """Corre un sub-lote del contra-agente en el modo dado. Devuelve
+            (batch_result, reporte) o (None, msg). El modo real verifica primero
+            que el webhook esté activo."""
+            nonlocal webhook_activo_msg
+            if total_conv <= 0:
+                return None, ""
+            if modo == "real":
                 pipeline_mod = _load_module("evaluar_pipeline")
                 activo, msg = pipeline_mod._verificar_webhook_activo(webhook_url, payload_template=payload_template)
                 webhook_activo_msg = msg
-
-                if activo:
-                    progress(f"Ejecutando {total_conversaciones} conversaciones", 65)
-                    try:
-                        batch_result, reporte_ca = mod.ejecutar_contra_agente(
-                            analisis_n8n=analisis,
-                            webhook_url=webhook_url,
-                            agent_name=nombre,
-                            total_conv=total_conversaciones,
-                            concurrencia=concurrencia,
-                            escenarios_extra=escenarios or [],
-                            modo_ejecucion="real",
-                            payload_template=payload_template,
-                            envelope_hint=envelope_hint,
-                        )
-                    except Exception as exc:
-                        reporte_ca = f"\n[CONTRA-AGENTE - Error: {exc}]\n"
-                else:
-                    reporte_ca = (
+                if not activo:
+                    return None, (
                         "\n[CONTRA-AGENTE] Webhook no activo: " + msg +
-                        "\nActiva el flujo en n8n para correr las pruebas dinamicas.\n"
+                        "\nActiva el flujo en n8n para correr las pruebas reales.\n"
                     )
+            else:
+                webhook_activo_msg = "sandbox: webhook no invocado"
+            progress(f"{etiqueta}: {total_conv} conversaciones", 65)
+            try:
+                return mod.ejecutar_contra_agente(
+                    analisis_n8n=analisis, webhook_url=webhook_url, agent_name=nombre,
+                    total_conv=total_conv, concurrencia=concurrencia,
+                    escenarios_extra=escenarios or [], modo_ejecucion=modo,
+                    payload_template=payload_template, envelope_hint=envelope_hint,
+                )
+            except Exception as exc:
+                return None, f"\n[CONTRA-AGENTE - Error: {exc}]\n"
+
+        if webhook_url and oai_key:
+            usar_split = (conversaciones_reales > 0 or conversaciones_sinteticas > 0)
+            if usar_split:
+                # Combinacion explicita: N reales + M sinteticas, con desglose.
+                br_real, rep_real = _correr(conversaciones_reales, "real", "Ejecutando reales")
+                br_sint, rep_sint = _correr(conversaciones_sinteticas, "sandbox", "Simulando sinteticas")
+                desglose_ejecucion = _desglose_ejecucion(br_real, br_sint)
+                # Para el resto del reporte (que asume un solo batch), se usa el
+                # real si existe; si no, el sintetico. El desglose lleva el detalle.
+                batch_result = br_real or br_sint
+                reporte_ca = (rep_real or "") + (rep_sint or "")
+            elif total_conversaciones > 0:
+                # Comportamiento clasico: un solo modo (backward compat).
+                batch_result, reporte_ca = _correr(
+                    total_conversaciones, modo_ejecucion,
+                    "Simulando" if modo_ejecucion == "sandbox" else "Ejecutando",
+                )
 
         # QA de artefacto (aditivo, opcional)
         artef: Dict[str, Any] = {}
@@ -1145,6 +1177,7 @@ def run_n8n_single(
             "reporte_txt": reporte,
             "reporte_path": reporte_path,
             "informe_enfoques": _strip_non_serializable(informe_enfoques),
+            "desglose_ejecucion": desglose_ejecucion,
             "artifact": _strip_non_serializable(artef) if artef else None,
         }
     finally:
