@@ -472,3 +472,12 @@ class VerifyObjectivesRequest(BaseModel):
 
     flow: N8nFlowSource = Field(..., description="Fuente del flujo. Usa flow.json_content para el modo sintético puro.")
     objectives: List[ObjectiveInput] = Field(..., min_length=1, description="Objetivos declarados a verificar")
+
+
+class PathCoverageRequest(BaseModel):
+    """Request de análisis de cobertura de caminos de un flujo n8n (estático).
+
+    Solo necesita el flujo en `flow.json_content`. No dispara ni ejecuta nada.
+    """
+
+    flow: N8nFlowSource = Field(..., description="Fuente del flujo. Usa flow.json_content.")

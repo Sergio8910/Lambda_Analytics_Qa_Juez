@@ -38,6 +38,7 @@ from juez.api.schemas_v1 import (
     MonitorUpdateRequest,
     N8nFailurePayload,
     CertificacionRequest,
+    PathCoverageRequest,
     SelfHealRequest,
     VerifyObjectivesRequest,
 )
@@ -481,6 +482,33 @@ def verify_objectives_endpoint(req: VerifyObjectivesRequest) -> Dict[str, Any]:
     objectives = [Objective(**o.model_dump()) for o in req.objectives]
     report = verify_objectives(workflow, objectives)
     return report.model_dump(mode="json")
+
+
+@router.post("/analyze/path-coverage", tags=["juez-v1"])
+def analyze_path_coverage_endpoint(req: PathCoverageRequest) -> Dict[str, Any]:
+    """Cobertura de CAMINOS de un flujo n8n (100% estático, sin tokens).
+
+    Resuelve el problema de que todas las pruebas tomen la misma rama: enumera
+    los caminos del grafo, extrae la condición de cada rama (IF/Switch/Filter) y
+    la clasifica en CONTROLABLE_POR_INPUT (se puede forzar armando el payload) o
+    DEPENDE_DE_EJECUCION (depende de la salida de un HTTP/Code/AI previo). Además
+    sintetiza, por camino, el payload que fuerza sus ramas controlables.
+
+    Pasa el flujo en `flow.json_content`.
+    Devuelve: nodos de ramificación con sus condiciones, caminos, resumen de
+    controlabilidad, nodos no cubiertos, e inputs sugeridos por camino.
+    """
+    from juez.evaluation.n8n.path_coverage import analizar_caminos, sintetizar_inputs_por_camino
+
+    workflow = req.flow.json_content
+    if not workflow:
+        raise HTTPException(
+            status_code=400,
+            detail="Se requiere el JSON del flujo en 'flow.json_content'.",
+        )
+    analisis = analizar_caminos(workflow)
+    sintesis = sintetizar_inputs_por_camino(workflow)
+    return {"analisis_caminos": analisis, "inputs_por_camino": sintesis}
 
 
 # =============================================================================
