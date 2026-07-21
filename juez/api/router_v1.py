@@ -217,6 +217,7 @@ def evaluate_n8n(req: EvalN8nRequest) -> Dict[str, Any]:
         evaluate_artifact=req.evaluate_artifact,
         artifact_agent_id=req.artifact_agent_id or "",
         modo_qa=req.modo_qa,
+        cubrir_caminos=req.cubrir_caminos,
     )
 
     return {
@@ -501,6 +502,7 @@ def analyze_path_coverage_endpoint(req: PathCoverageRequest) -> Dict[str, Any]:
     from juez.evaluation.n8n.path_coverage import (
         analizar_caminos,
         cobertura_de_nodos,
+        generar_escenarios_por_rama,
         sintetizar_inputs_por_camino,
     )
 
@@ -514,6 +516,7 @@ def analyze_path_coverage_endpoint(req: PathCoverageRequest) -> Dict[str, Any]:
         "analisis_caminos": analizar_caminos(workflow),
         "inputs_por_camino": sintetizar_inputs_por_camino(workflow),
         "cobertura_de_nodos": cobertura_de_nodos(workflow),
+        "escenarios_por_rama": generar_escenarios_por_rama(workflow),
     }
 
 

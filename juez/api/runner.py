@@ -936,6 +936,7 @@ def run_n8n_single(
     modo_qa: str = "ambos",
     modo_ejecucion: str = "sandbox",
     reference_dataset_id: Optional[str] = None,
+    cubrir_caminos: bool = False,
     progress_cb: Optional[Callable[[str, int], None]] = None,
 ) -> Dict[str, Any]:
     """EvalÃºa un Ãºnico flujo n8n.
@@ -946,15 +947,28 @@ def run_n8n_single(
     Si contiene un `payload_template` (ejemplo real del sobre que espera el
     webhook, ej. WhatsApp Business API), se usa para disparar las
     conversaciones de prueba con la forma real que el flujo necesita.
+
+    `cubrir_caminos`: si True, agrega escenarios DIRIGIDOS a cada rama del flujo
+    (IF/Switch) para que las conversaciones recorran caminos distintos en vez de
+    golpear siempre el mismo. Para ramas gated por AI/HTTP usa steering
+    semántico (mensajes cuyo significado provoca el valor que dispara la rama).
     """
     progress = progress_cb or _progress_noop
     payload_template = _resolver_payload_template(reference_dataset_id)
+    escenarios = list(escenarios or [])
     previo_env = _setear_env_temporal(
         openai_key=openai_key, n8n_api_key=n8n_api_key, n8n_base_url=n8n_base_url
     )
     try:
         progress("Resolviendo origen del flujo n8n", 5)
         wf, webhook_url, nombre = _resolve_n8n_flow(flow, n8n_api_key, n8n_base_url)
+
+        if cubrir_caminos:
+            try:
+                from juez.evaluation.n8n.path_coverage import generar_escenarios_por_rama
+                escenarios = escenarios + [e["escenario"] for e in generar_escenarios_por_rama(wf)]
+            except Exception:
+                pass
 
         progress(f"Cargando mÃ³dulo n8n", 10)
         mod = _load_module("evaluar_n8n")

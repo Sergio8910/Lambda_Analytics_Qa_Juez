@@ -8,6 +8,7 @@ from juez.evaluation.n8n.path_coverage import (
     _campo_de_expresion,
     analizar_caminos,
     cobertura_de_nodos,
+    generar_escenarios_por_rama,
     sintetizar_inputs_por_camino,
 )
 
@@ -218,6 +219,58 @@ def test_cobertura_de_nodos_flujo_gated_por_http_requiere_ejecucion():
     assert "Ok" in c["nodos_que_requieren_datos_de_ejecucion"]
     assert "Err" in c["nodos_que_requieren_datos_de_ejecucion"]
     assert c["porcentaje_cubrible_por_input"] < 100.0
+
+
+def test_genera_un_escenario_por_rama():
+    nodes = [
+        {"name": "Webhook", "type": "n8n-nodes-base.webhook", "id": "w", "parameters": {"path": "x"}},
+        _if_node("If", "={{ $json.tipo }}", "premium"),
+        {"name": "A", "type": "n8n-nodes-base.set", "id": "a", "parameters": {}},
+        {"name": "B", "type": "n8n-nodes-base.set", "id": "b", "parameters": {}},
+    ]
+    conns = {
+        "Webhook": {"main": [[{"node": "If", "type": "main", "index": 0}]]},
+        "If": {"main": [
+            [{"node": "A", "type": "main", "index": 0}],
+            [{"node": "B", "type": "main", "index": 0}],
+        ]},
+    }
+    esc = generar_escenarios_por_rama(_wf(nodes, conns))
+    ramas = {(e["nodo"], e["rama"]) for e in esc}
+    assert ("If", "true") in ramas and ("If", "false") in ramas
+    assert all(e["escenario"] for e in esc)
+
+
+def test_escenario_ai_gated_pide_steering_semantico():
+    """Una rama gated por la salida de un AI debe pedir un mensaje cuyo
+    SIGNIFICADO provoque el valor (no un payload directo)."""
+    nodes = [
+        {"name": "Webhook", "type": "n8n-nodes-base.webhook", "id": "w", "parameters": {"path": "x"}},
+        {"name": "Agent", "type": "@n8n/n8n-nodes-langchain.agent", "id": "ag", "parameters": {}},
+        _if_node("If", "={{ $json.output.clasificacion }}", "producto", ("string", "contains")),
+        {"name": "Prod", "type": "n8n-nodes-base.set", "id": "p", "parameters": {}},
+        {"name": "Otro", "type": "n8n-nodes-base.set", "id": "o", "parameters": {}},
+    ]
+    conns = {
+        "Webhook": {"main": [[{"node": "Agent", "type": "main", "index": 0}]]},
+        "Agent": {"main": [[{"node": "If", "type": "main", "index": 0}]]},
+        "If": {"main": [
+            [{"node": "Prod", "type": "main", "index": 0}],
+            [{"node": "Otro", "type": "main", "index": 0}],
+        ]},
+    }
+    esc = generar_escenarios_por_rama(_wf(nodes, conns))
+    rama_true = next(e for e in esc if e["nodo"] == "If" and e["rama"] == "true")
+    assert rama_true["controlabilidad"] == "depende_de_ejecucion"
+    assert "significado" in rama_true["escenario"].lower() or "produce" in rama_true["escenario"].lower()
+
+
+def test_run_n8n_single_expone_cubrir_caminos():
+    """El flag de auto-feed llega hasta run_n8n_single (wiring del endpoint)."""
+    import inspect
+
+    from juez.api.runner import run_n8n_single
+    assert "cubrir_caminos" in inspect.signature(run_n8n_single).parameters
 
 
 def test_no_explota_con_ciclos():

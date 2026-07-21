@@ -326,6 +326,69 @@ def sintetizar_inputs_por_camino(workflow: Dict[str, Any], max_caminos: int = _M
     }
 
 
+def _frase_objetivo(cond: Dict[str, Any]) -> str:
+    """Describe, en lenguaje natural, qué debe pasar con un campo para disparar
+    la rama -- para guiar la generación de un input que lo provoque."""
+    campo = cond.get("campo") or "el campo"
+    op = (cond.get("operador") or "").lower()
+    val = cond.get("valor")
+    if op.endswith(".exists") or op.endswith(".notempty"):
+        return f"'{campo}' venga con un valor (exista y no esté vacío)"
+    if op.endswith(".notexists") or op.endswith(".empty"):
+        return f"'{campo}' NO venga / quede vacío"
+    if "true" in op:
+        return f"'{campo}' resulte verdadero"
+    if "false" in op:
+        return f"'{campo}' resulte falso"
+    if op.endswith(".contains"):
+        return f"'{campo}' contenga '{val}'"
+    return f"'{campo}' sea '{val}'"
+
+
+def generar_escenarios_por_rama(workflow: Dict[str, Any], max_caminos: int = _MAX_CAMINOS) -> List[Dict[str, Any]]:
+    """Genera escenarios DIRIGIDOS a cada rama, para que las pruebas recorran
+    caminos distintos en vez de golpear siempre el mismo.
+
+    Para ramas controlables por input, el escenario incluye el payload exacto.
+    Para ramas gated por un nodo previo (AI/HTTP), describe el objetivo
+    semántico ('haz que el usuario hable de X para que el agente clasifique Y')
+    -- steering: el input real hace que el nodo previo produzca el valor que
+    dispara la rama. Cada escenario es texto que alimenta al contra-agente.
+    """
+    analisis = analizar_caminos(workflow, max_caminos=max_caminos)
+    escenarios: List[Dict[str, Any]] = []
+    vistos: set = set()
+    for rama in analisis["ramas"]:
+        clave = (rama["nodo"], rama["rama"])
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        ctrl = rama["controlabilidad"]
+        objetivos = "; ".join(_frase_objetivo(c) for c in rama["condiciones"]) or "la condición por defecto (else)"
+        if ctrl == "controlable_por_input":
+            texto = (
+                f"Para ejercer la rama '{rama['rama']}' del nodo '{rama['nodo']}', "
+                f"el input debe hacer que {objetivos}. Manda un mensaje/petición coherente con eso."
+            )
+        elif ctrl == "depende_de_ejecucion":
+            texto = (
+                f"Objetivo de cobertura: recorrer la rama '{rama['rama']}' del nodo '{rama['nodo']}', "
+                f"que se dispara cuando {objetivos}. Como ese valor lo produce un nodo previo "
+                f"(clasificador/HTTP), redacta un mensaje del usuario cuyo SIGNIFICADO lleve a ese "
+                f"resultado (ej. hablar claramente del caso que produce ese valor)."
+            )
+        else:  # fallback / else
+            texto = (
+                f"Para ejercer la rama por defecto '{rama['rama']}' del nodo '{rama['nodo']}', "
+                f"manda un caso que NO cumpla ninguna de las otras condiciones del nodo."
+            )
+        escenarios.append({
+            "nodo": rama["nodo"], "rama": rama["rama"], "controlabilidad": ctrl,
+            "escenario": texto,
+        })
+    return escenarios
+
+
 def cobertura_de_nodos(workflow: Dict[str, Any], max_caminos: int = _MAX_CAMINOS) -> Dict[str, Any]:
     """Mapa de cobertura de NODOS: por cada nodo, si se puede cubrir armando el
     payload inicial, si requiere datos de ejecución (rama que depende de un

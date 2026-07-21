@@ -143,6 +143,7 @@ class EvalN8nRequest(BaseModel):
     evaluate_artifact: bool = Field(True, description="Si el agente tiene spec de artefacto, evalua su salida (ej. PDF). Por defecto activo y sintetico (no dispara el flujo real). No-op si el agente no tiene spec.")
     modo_qa: Literal["tecnico", "funcional", "ambos"] = Field("ambos", description="Tipo de QA: tecnico (estructura/codigo/seguridad), funcional (objetivos/salida/negocio) o ambos.")
     artifact_agent_id: Optional[str] = Field(None, description="Override del agent_id usado para buscar la spec de artefacto")
+    cubrir_caminos: bool = Field(False, description="Agrega escenarios dirigidos a cada rama del flujo (IF/Switch) para recorrer caminos distintos, no siempre el mismo. Para ramas gated por AI/HTTP usa steering semantico.")
 
 
 class EvalPipelineRequest(BaseModel):
