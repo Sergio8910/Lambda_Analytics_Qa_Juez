@@ -326,6 +326,59 @@ def sintetizar_inputs_por_camino(workflow: Dict[str, Any], max_caminos: int = _M
     }
 
 
+def cobertura_de_nodos(workflow: Dict[str, Any], max_caminos: int = _MAX_CAMINOS) -> Dict[str, Any]:
+    """Mapa de cobertura de NODOS: por cada nodo, si se puede cubrir armando el
+    payload inicial, si requiere datos de ejecución (rama que depende de un
+    HTTP/Code/AI previo), o si es inalcanzable en el grafo.
+
+    Responde directo la pregunta '¿qué nodos podemos recorrer y cuáles no, y por
+    qué?'. Es la base honesta de la cobertura: no promete cubrir lo que
+    estáticamente no se puede forzar desde el input.
+    """
+    _inv, graph = parse_workflow(workflow)
+    todos = {n.name for n in graph.nodes}
+    inalcanzables = set(graph.unreachable_nodes or [])
+
+    sintesis = sintetizar_inputs_por_camino(workflow, max_caminos=max_caminos)
+    cubribles: set = set()
+    requieren_ejecucion: set = set()
+    for camino in sintesis["inputs_por_camino"]:
+        nodos_camino = set(camino["secuencia"])
+        if camino["totalmente_cubrible_por_input"]:
+            cubribles |= nodos_camino
+        else:
+            requieren_ejecucion |= nodos_camino
+
+    # Un nodo que aparece en ALGÚN camino cubrible, se considera cubrible
+    # (aunque también aparezca en caminos que requieren ejecución).
+    requieren_ejecucion -= cubribles
+    requieren_ejecucion -= inalcanzables
+    # Nodos que no salieron en ningún camino main y no son inalcanzables:
+    # típicamente sub-nodos de AI (languageModel/tool) conectados por canales
+    # no-main; se listan aparte para no inflar el denominador.
+    en_algun_camino = cubribles | requieren_ejecucion | inalcanzables
+    fuera_de_camino_main = sorted(todos - en_algun_camino)
+
+    alcanzables = todos - inalcanzables
+    denom = len(alcanzables - set(fuera_de_camino_main)) or 1
+    pct = round(100.0 * len(cubribles) / denom, 1)
+
+    return {
+        "total_nodos": len(todos),
+        "nodos_cubribles_por_input": sorted(cubribles),
+        "nodos_que_requieren_datos_de_ejecucion": sorted(requieren_ejecucion),
+        "nodos_inalcanzables": sorted(inalcanzables),
+        "nodos_fuera_del_camino_main": fuera_de_camino_main,
+        "porcentaje_cubrible_por_input": pct,
+        "nota": (
+            "cubrible_por_input = un payload inicial lo alcanza. requiere_datos_de_ejecucion = "
+            "solo se alcanza si un nodo previo (HTTP/Code/AI) devuelve cierto valor -> ejecución "
+            "real con esos datos o un stub. inalcanzable = no conectado desde el trigger. "
+            "'fuera_del_camino_main' suele ser sub-nodos de AI (modelo/tools) por canales no-main."
+        ),
+    }
+
+
 def _hay_transformador_upstream(nodo: str, graph, cat: Dict[str, str]) -> bool:
     """True si hay un nodo transformador (http/ai/code) entre algún trigger y `nodo`."""
     padres: Dict[str, List[str]] = {}

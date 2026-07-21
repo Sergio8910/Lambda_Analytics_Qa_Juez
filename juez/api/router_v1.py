@@ -498,7 +498,11 @@ def analyze_path_coverage_endpoint(req: PathCoverageRequest) -> Dict[str, Any]:
     Devuelve: nodos de ramificación con sus condiciones, caminos, resumen de
     controlabilidad, nodos no cubiertos, e inputs sugeridos por camino.
     """
-    from juez.evaluation.n8n.path_coverage import analizar_caminos, sintetizar_inputs_por_camino
+    from juez.evaluation.n8n.path_coverage import (
+        analizar_caminos,
+        cobertura_de_nodos,
+        sintetizar_inputs_por_camino,
+    )
 
     workflow = req.flow.json_content
     if not workflow:
@@ -506,9 +510,11 @@ def analyze_path_coverage_endpoint(req: PathCoverageRequest) -> Dict[str, Any]:
             status_code=400,
             detail="Se requiere el JSON del flujo en 'flow.json_content'.",
         )
-    analisis = analizar_caminos(workflow)
-    sintesis = sintetizar_inputs_por_camino(workflow)
-    return {"analisis_caminos": analisis, "inputs_por_camino": sintesis}
+    return {
+        "analisis_caminos": analizar_caminos(workflow),
+        "inputs_por_camino": sintetizar_inputs_por_camino(workflow),
+        "cobertura_de_nodos": cobertura_de_nodos(workflow),
+    }
 
 
 # =============================================================================

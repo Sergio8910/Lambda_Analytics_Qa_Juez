@@ -7,6 +7,7 @@ from __future__ import annotations
 from juez.evaluation.n8n.path_coverage import (
     _campo_de_expresion,
     analizar_caminos,
+    cobertura_de_nodos,
     sintetizar_inputs_por_camino,
 )
 
@@ -174,6 +175,49 @@ def test_sintesis_declara_ramas_no_forzables_tras_http():
     for i in r["inputs_por_camino"]:
         assert i["ramas_no_forzables_desde_input"]  # el statusCode viene del HTTP, no del input
         assert i["totalmente_cubrible_por_input"] is False
+
+
+def test_cobertura_de_nodos_flujo_controlable_100pct():
+    nodes = [
+        {"name": "Webhook", "type": "n8n-nodes-base.webhook", "id": "w", "parameters": {"path": "x"}},
+        _if_node("If", "={{ $json.tipo }}", "premium"),
+        {"name": "A", "type": "n8n-nodes-base.set", "id": "a", "parameters": {}},
+        {"name": "B", "type": "n8n-nodes-base.set", "id": "b", "parameters": {}},
+    ]
+    conns = {
+        "Webhook": {"main": [[{"node": "If", "type": "main", "index": 0}]]},
+        "If": {"main": [
+            [{"node": "A", "type": "main", "index": 0}],
+            [{"node": "B", "type": "main", "index": 0}],
+        ]},
+    }
+    c = cobertura_de_nodos(_wf(nodes, conns))
+    assert c["porcentaje_cubrible_por_input"] == 100.0
+    assert set(c["nodos_cubribles_por_input"]) == {"Webhook", "If", "A", "B"}
+    assert c["nodos_que_requieren_datos_de_ejecucion"] == []
+
+
+def test_cobertura_de_nodos_flujo_gated_por_http_requiere_ejecucion():
+    nodes = [
+        {"name": "Webhook", "type": "n8n-nodes-base.webhook", "id": "w", "parameters": {"path": "x"}},
+        {"name": "HTTP", "type": "n8n-nodes-base.httpRequest", "id": "h", "parameters": {"url": "https://api.x"}},
+        _if_node("If", "={{ $json.statusCode }}", 200, ("number", "equals")),
+        {"name": "Ok", "type": "n8n-nodes-base.set", "id": "o", "parameters": {}},
+        {"name": "Err", "type": "n8n-nodes-base.set", "id": "e", "parameters": {}},
+    ]
+    conns = {
+        "Webhook": {"main": [[{"node": "HTTP", "type": "main", "index": 0}]]},
+        "HTTP": {"main": [[{"node": "If", "type": "main", "index": 0}]]},
+        "If": {"main": [
+            [{"node": "Ok", "type": "main", "index": 0}],
+            [{"node": "Err", "type": "main", "index": 0}],
+        ]},
+    }
+    c = cobertura_de_nodos(_wf(nodes, conns))
+    # Ok/Err quedan tras un IF gated por el statusCode del HTTP -> requieren ejecución.
+    assert "Ok" in c["nodos_que_requieren_datos_de_ejecucion"]
+    assert "Err" in c["nodos_que_requieren_datos_de_ejecucion"]
+    assert c["porcentaje_cubrible_por_input"] < 100.0
 
 
 def test_no_explota_con_ciclos():
