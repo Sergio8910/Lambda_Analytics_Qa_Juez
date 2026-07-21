@@ -27,7 +27,16 @@ es lo que hace que el "Aplicar" del lado Gamma pueda ser automático y seguro.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Dict, List, Optional
+
+# Variables de plantilla que el prompt puede usar: {{var}}, {var}, [var], ${var}.
+# Si la reescritura las pierde, ROMPE el agente en runtime -> hay que detectarlo.
+_RE_VARIABLES = re.compile(r"\{\{[^}]+\}\}|\$\{[^}]+\}|\{[^}\s]+\}|\[[^\]\s]+\]")
+
+
+def _variables_de(texto: str) -> set:
+    return set(_RE_VARIABLES.findall(texto or ""))
 
 # Normalización de severidad a la escala interna de La Colmena.
 _SEV_NORM = {
@@ -259,6 +268,19 @@ def proponer_mejora_prompt(nombre: str, prompt_actual: str,
         partes.append("Se aplicaron mejoras de claridad, guardrails y manejo de casos límite.")
     explicacion = " ".join(partes) or "Se propone una versión más clara y segura de las instrucciones del agente."
 
+    # Verificación de seguridad de la reescritura: si el LLM perdió variables de
+    # plantilla ({{var}}, {var}, ${var}, [var]) que estaban en el original,
+    # aplicar el "después" ROMPERÍA el agente en runtime. En ese caso la mejora
+    # NO es auto-aplicable y se marca para revisión humana.
+    vars_faltantes = _variables_de(prompt_actual) - _variables_de(despues)
+    aplicable = not vars_faltantes
+    requiere_revision = bool(vars_faltantes)
+    if vars_faltantes:
+        explicacion += (
+            f" ADVERTENCIA: la reescritura perdió variable(s) de plantilla "
+            f"({', '.join(sorted(vars_faltantes))}); requiere revisión manual antes de aplicar."
+        )
+
     return {
         "id": "prompt-rewrite",
         "titulo": "Mejorar las instrucciones del agente",
@@ -267,8 +289,9 @@ def proponer_mejora_prompt(nombre: str, prompt_actual: str,
         "objetivo": {"tipo": "agent", "campo": "prompt"},
         "antes": prompt_actual,
         "despues": despues,
-        "aplicable": True,
-        "requiere_revision_manual": False,
+        "aplicable": aplicable,
+        "requiere_revision_manual": requiere_revision,
+        "variables_perdidas": sorted(vars_faltantes),
     }
 
 

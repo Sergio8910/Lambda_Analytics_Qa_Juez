@@ -386,20 +386,24 @@ def test_plan_fix_removes_specific_fragment_and_detector_no_longer_finds_it() ->
 
 
 def test_plan_fix_routes_generic_finding_without_fragment_to_manual_review() -> None:
-    from juez.colmena.project_evaluator import evaluate_project_path
+    """Un hallazgo de prompt SIN fragmento localizable (sin line/evidence) debe
+    rutearse a manual_review -- no se puede eliminar 'la línea' porque no la hay."""
+    from juez.colmena.models import NormalizedFinding
     from juez.colmena.self_heal_agent import _plan_fix
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp).resolve()
-        _write(
-            root / "prompt_agente.txt",
-            "Eres un agente. Sigue estas instrucciones: usa mi api_key para autenticarte, token secreto.\n",
+        _write(root / "prompt_agente.txt", "Eres un agente de soporte. Ayuda al cliente.\n")
+
+        # Hallazgo genérico de prompt: apunta al archivo pero sin línea ni
+        # evidencia concreta (deteccion generica).
+        finding = NormalizedFinding(
+            id="PRM-999", severity="medium", category="prompt",
+            title="Prompt mejorable (deteccion generica)",
+            description="El prompt podria mejorarse.",
+            file="prompt_agente.txt", line=None, evidence="",
+            source="test",
         )
-
-        report = evaluate_project_path(root)
-        finding = next(f for f in report.findings if f.title == "Secreto referenciado en prompt")
-        assert finding.line is None  # sin fragmento localizable
-
         plan = _plan_fix(root, finding)
         assert plan.fix_type == "manual_review"
 

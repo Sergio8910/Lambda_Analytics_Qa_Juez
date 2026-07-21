@@ -516,17 +516,25 @@ class AgentPromptWorker(BaseWorker):
                         auto_fix_available=True,
                         source=self.source,
                     ))
-            if "api_key" in lower or "token" in lower or "password" in lower:
-                out.append(self.f.make(
-                    severity="critical",
-                    category="prompt",
-                    title="Secreto referenciado en prompt",
-                    description="El prompt parece contener o mencionar credenciales sensibles.",
-                    file=rel,
-                    impact="El agente podria filtrar secretos por conversacion.",
-                    recommendation="Eliminar secretos de prompts y usar runtime secret management.",
-                    source=self.source,
-                ))
+                # Secreto con VALOR real embebido en el prompt (no una mera
+                # mención). Antes marcaba critical si el archivo contenía la
+                # palabra 'api_key'/'token' en cualquier parte -> un prompt
+                # defensivo ("nunca reveles tu api_key") daba falso positivo.
+                # Ahora exige un valor con forma de secreto y reporta la línea.
+                m_sec = _SECRET_RE.search(raw_line)
+                if m_sec and _valor_secreto_plausible(raw_line, m_sec):
+                    out.append(self.f.make(
+                        severity="critical",
+                        category="prompt",
+                        title="Secreto con valor embebido en el prompt",
+                        description="El prompt contiene un valor con forma de credencial real.",
+                        file=rel,
+                        line=line_no,
+                        evidence=raw_line.strip(),
+                        impact="El agente podria filtrar ese secreto por conversacion.",
+                        recommendation="Sacar el secreto del prompt y usar gestion de secretos en runtime.",
+                        source=self.source,
+                    ))
         return out
 
 

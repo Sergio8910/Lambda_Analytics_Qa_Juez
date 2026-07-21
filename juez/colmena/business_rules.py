@@ -262,17 +262,23 @@ def verify_functional_against_rules(
             solapadas = (palabras_regla & _keywords(texto)) - _PALABRAS_GENERICAS
             if not solapadas:
                 continue
+            # Severidad 'alto', NO 'critical': esto es una señal HEURÍSTICA por
+            # solapamiento de texto (no una violación confirmada por ejecución).
+            # Marcarla critical la volvía bloqueante con la mínima confianza --
+            # invertía la credibilidad del veredicto. 'alto' la hace visible y
+            # accionable sin bloquear por una coincidencia de palabras.
             findings.append(builder.make(
-                severity="critical",
+                severity="high",
                 category="business_rule",
-                title=f"Posible violacion de regla de negocio explicita ({regla.id})",
+                title=f"Posible violacion de regla de negocio ({regla.id}) — revisar",
                 description=(
                     f"El caso sintetico '{res.case_id}' fallo con un comportamiento que "
-                    f"parece contradecir la regla: {regla.descripcion}"
+                    f"PARECE contradecir la regla (coincidencia de terminos: "
+                    f"{', '.join(sorted(solapadas))}): {regla.descripcion}"
                 ),
                 evidence=res.message[:300],
-                impact="El flujo/agente podria estar incumpliendo una regla de negocio declarada por el equipo.",
-                recommendation="Revisar el caso y ajustar la logica para respetar la regla de negocio.",
+                impact="Posible incumplimiento de una regla declarada; requiere confirmacion humana o ejecucion real.",
+                recommendation="Revisar el caso y confirmar si de verdad viola la regla antes de tratarlo como bloqueante.",
                 source="business_rules_worker",
             ))
     return findings

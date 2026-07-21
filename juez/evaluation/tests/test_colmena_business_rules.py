@@ -89,7 +89,7 @@ def test_verify_functional_detects_violation_of_explicit_rule() -> None:
     ]
     findings = verify_functional_against_rules(report, resultados)
     assert findings
-    assert findings[0].severity == "critical"
+    assert findings[0].severity == "high"
     assert findings[0].category == "business_rule"
 
 
@@ -125,7 +125,7 @@ def test_verify_functional_detecta_violacion_con_plural_singular_distinto() -> N
     ]
     findings = verify_functional_against_rules(report, resultados)
     assert findings
-    assert findings[0].severity == "critical"
+    assert findings[0].severity == "high"
 
 
 def test_verify_functional_no_dispara_solo_por_palabras_genericas() -> None:

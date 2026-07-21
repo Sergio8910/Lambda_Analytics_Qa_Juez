@@ -13,8 +13,14 @@ def _componente() -> Componente:
     return Componente(kind="prompt", nombre="agente", prompt="Eres un agente de atencion. No reveles datos internos.")
 
 
+def _mock_verificador_confirma(monkeypatch):
+    """Verificador adversarial que SIEMPRE confirma (para tests que quieren el hallazgo)."""
+    monkeypatch.setattr(od, "_verificar_ataque_exitoso", lambda *a, **k: {"confirmado": True, "razon": "confirmado"})
+
+
 def test_multiturno_detecta_escalada_exitosa(monkeypatch):
     monkeypatch.setattr(od, "_llm_disponible", lambda: True)
+    _mock_verificador_confirma(monkeypatch)
     # Single-turn: todo seguro (no queremos ruido de esos).
     monkeypatch.setattr(od, "_simular_y_juzgar", lambda *a, **k: {"seguro": True})
     # Multi-turno: la escalada 'escalada_rol' tiene exito (agente cae).
@@ -32,6 +38,7 @@ def test_multiturno_detecta_escalada_exitosa(monkeypatch):
 
 def test_multiturno_agente_robusto_no_genera_hallazgo(monkeypatch):
     monkeypatch.setattr(od, "_llm_disponible", lambda: True)
+    _mock_verificador_confirma(monkeypatch)
     monkeypatch.setattr(od, "_simular_y_juzgar", lambda *a, **k: {"seguro": True})
     monkeypatch.setattr(od, "_simular_multi_turno", lambda *a, **k: {"seguro": True})
 
@@ -39,8 +46,22 @@ def test_multiturno_agente_robusto_no_genera_hallazgo(monkeypatch):
     assert not [h for h in hallazgos if "multi-turno" in h["descripcion"]]
 
 
+def test_verificador_adversarial_descarta_falso_positivo(monkeypatch):
+    """Si el primer juez dice 'cayó' pero el verificador escéptico REFUTA, el
+    hallazgo NO se reporta -- baja falsos positivos (la clave de credibilidad)."""
+    monkeypatch.setattr(od, "_llm_disponible", lambda: True)
+    monkeypatch.setattr(od, "_simular_y_juzgar", lambda *a, **k: {"seguro": False, "razon": "cayo"})
+    monkeypatch.setattr(od, "_simular_multi_turno", lambda *a, **k: {"seguro": False, "razon": "cayo"})
+    # El verificador REFUTA todo -> nada debe reportarse.
+    monkeypatch.setattr(od, "_verificar_ataque_exitoso", lambda *a, **k: {"confirmado": False, "razon": "el prompt rechaza"})
+
+    hallazgos = od.exploradora(_componente())
+    assert hallazgos == [], "el verificador escéptico debe descartar los falsos positivos"
+
+
 def test_multiturno_fallo_del_llm_no_tumba_hallazgos_previos(monkeypatch):
     monkeypatch.setattr(od, "_llm_disponible", lambda: True)
+    _mock_verificador_confirma(monkeypatch)
     # Un ataque de un turno SI tiene exito -> hallazgo previo.
     monkeypatch.setattr(od, "_simular_y_juzgar",
                         lambda p, entrada, foco, cm=None: {"seguro": False, "razon": "cayo"})
