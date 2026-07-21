@@ -442,6 +442,91 @@ def cobertura_de_nodos(workflow: Dict[str, Any], max_caminos: int = _MAX_CAMINOS
     }
 
 
+def _stubs_de_camino(camino: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Los STUBS necesarios para recorrer un camino: por cada salto gated por
+    ejecución (AI/HTTP), qué campo forzar y a qué valor para tomar esa rama."""
+    stubs: List[Dict[str, Any]] = []
+    for salto in camino.get("condiciones", []):
+        if salto.get("controlabilidad") != "depende_de_ejecucion":
+            continue
+        negar = salto.get("negar", False)
+        for c in salto.get("condiciones", []):
+            if not c.get("campo"):
+                continue
+            forzar_a = _valor_para_negar(c) if negar else _valor_para_satisfacer(c)
+            stubs.append({
+                "nodo_gating": salto["nodo"],
+                "rama": salto["rama"],
+                "campo": c["campo"],
+                "fuente": c.get("fuente", ""),
+                "forzar_a": forzar_a,
+            })
+    return stubs
+
+
+def cobertura_combinada(workflow: Dict[str, Any], max_caminos: int = _MAX_CAMINOS) -> Dict[str, Any]:
+    """Cobertura DETERMINISTA de todos los nodos combinando ejecución real +
+    stubs. Cada nodo queda como:
+      - cubrible_real: un payload inicial lo alcanza (no necesita stub),
+      - cubrible_por_stub: solo se alcanza forzando el valor de un nodo previo
+        (AI/HTTP) -> se entrega la RECETA (qué campo forzar y a qué valor),
+      - inalcanzable: no conectado desde el trigger.
+
+    Responde 'recorrer absolutamente todos los nodos' de forma honesta: con
+    stubs, el 100% de los nodos alcanzables tiene una receta de cobertura;
+    el reporte distingue qué se cubre real vs qué necesitó stub.
+    """
+    _inv, graph = parse_workflow(workflow)
+    todos = {n.name for n in graph.nodes}
+    inalcanzables = set(graph.unreachable_nodes or [])
+    analisis = analizar_caminos(workflow, max_caminos=max_caminos)
+
+    # Para cada nodo, la mejor forma de cubrirlo: real gana a stub; entre stubs,
+    # el que necesite menos valores forzados.
+    mejor: Dict[str, Dict[str, Any]] = {}
+    for camino in analisis["caminos"]:
+        stubs = _stubs_de_camino(camino)
+        es_real = not stubs
+        for nodo in camino["secuencia"]:
+            actual = mejor.get(nodo)
+            if actual is None:
+                mejor[nodo] = {"real": es_real, "stubs": stubs}
+            elif es_real and not actual["real"]:
+                mejor[nodo] = {"real": True, "stubs": []}
+            elif (not es_real) and (not actual["real"]) and len(stubs) < len(actual["stubs"]):
+                mejor[nodo] = {"real": False, "stubs": stubs}
+
+    cubrible_real = sorted(n for n, v in mejor.items() if v["real"])
+    cubrible_por_stub = [
+        {"nodo": n, "stubs_necesarios": v["stubs"]}
+        for n, v in sorted(mejor.items()) if not v["real"]
+    ]
+    en_camino = set(mejor.keys())
+    fuera_main = sorted(todos - en_camino - inalcanzables)
+
+    alcanzables = todos - inalcanzables - set(fuera_main)
+    denom = len(alcanzables) or 1
+    pct_real = round(100.0 * len(cubrible_real) / denom, 1)
+    cubiertos_total = len(cubrible_real) + len(cubrible_por_stub)
+    pct_con_stubs = round(100.0 * cubiertos_total / denom, 1)
+
+    return {
+        "total_nodos": len(todos),
+        "porcentaje_cubrible_real": pct_real,
+        "porcentaje_cubrible_con_stubs": pct_con_stubs,
+        "nodos_cubribles_real": cubrible_real,
+        "nodos_cubribles_por_stub": cubrible_por_stub,
+        "nodos_inalcanzables": sorted(inalcanzables),
+        "nodos_fuera_del_camino_main": fuera_main,
+        "nota": (
+            "Cobertura combinada real + stubs. 'cubrible_real' no necesita forzar nada; "
+            "'cubrible_por_stub' trae la receta (qué campo forzar y a qué valor) para "
+            "recorrer ese nodo sin depender de que el AI/HTTP se comporte. Con stubs, el "
+            "100% de los nodos alcanzables queda cubierto de forma determinista."
+        ),
+    }
+
+
 def _hay_transformador_upstream(nodo: str, graph, cat: Dict[str, str]) -> bool:
     """True si hay un nodo transformador (http/ai/code) entre algún trigger y `nodo`."""
     padres: Dict[str, List[str]] = {}

@@ -7,6 +7,7 @@ from __future__ import annotations
 from juez.evaluation.n8n.path_coverage import (
     _campo_de_expresion,
     analizar_caminos,
+    cobertura_combinada,
     cobertura_de_nodos,
     generar_escenarios_por_rama,
     sintetizar_inputs_por_camino,
@@ -263,6 +264,51 @@ def test_escenario_ai_gated_pide_steering_semantico():
     rama_true = next(e for e in esc if e["nodo"] == "If" and e["rama"] == "true")
     assert rama_true["controlabilidad"] == "depende_de_ejecucion"
     assert "significado" in rama_true["escenario"].lower() or "produce" in rama_true["escenario"].lower()
+
+
+def test_cobertura_combinada_stubs_llegan_al_100pct():
+    """Un flujo gated por HTTP da 0% real pero 100% con stubs, con la receta."""
+    nodes = [
+        {"name": "Webhook", "type": "n8n-nodes-base.webhook", "id": "w", "parameters": {"path": "x"}},
+        {"name": "HTTP", "type": "n8n-nodes-base.httpRequest", "id": "h", "parameters": {"url": "https://api.x"}},
+        _if_node("If", "={{ $json.statusCode }}", 200, ("number", "equals")),
+        {"name": "Ok", "type": "n8n-nodes-base.set", "id": "o", "parameters": {}},
+        {"name": "Err", "type": "n8n-nodes-base.set", "id": "e", "parameters": {}},
+    ]
+    conns = {
+        "Webhook": {"main": [[{"node": "HTTP", "type": "main", "index": 0}]]},
+        "HTTP": {"main": [[{"node": "If", "type": "main", "index": 0}]]},
+        "If": {"main": [
+            [{"node": "Ok", "type": "main", "index": 0}],
+            [{"node": "Err", "type": "main", "index": 0}],
+        ]},
+    }
+    c = cobertura_combinada(_wf(nodes, conns))
+    assert c["porcentaje_cubrible_con_stubs"] == 100.0
+    # Ok/Err quedan cubribles por stub, con la receta de qué forzar.
+    por_stub = {x["nodo"]: x for x in c["nodos_cubribles_por_stub"]}
+    assert "Ok" in por_stub and "Err" in por_stub
+    recetas_ok = por_stub["Ok"]["stubs_necesarios"]
+    assert any(s["campo"] == "statusCode" for s in recetas_ok)
+
+
+def test_cobertura_combinada_flujo_controlable_es_todo_real():
+    nodes = [
+        {"name": "Webhook", "type": "n8n-nodes-base.webhook", "id": "w", "parameters": {"path": "x"}},
+        _if_node("If", "={{ $json.tipo }}", "premium"),
+        {"name": "A", "type": "n8n-nodes-base.set", "id": "a", "parameters": {}},
+        {"name": "B", "type": "n8n-nodes-base.set", "id": "b", "parameters": {}},
+    ]
+    conns = {
+        "Webhook": {"main": [[{"node": "If", "type": "main", "index": 0}]]},
+        "If": {"main": [
+            [{"node": "A", "type": "main", "index": 0}],
+            [{"node": "B", "type": "main", "index": 0}],
+        ]},
+    }
+    c = cobertura_combinada(_wf(nodes, conns))
+    assert c["porcentaje_cubrible_real"] == 100.0
+    assert c["nodos_cubribles_por_stub"] == []
 
 
 def test_run_n8n_single_expone_cubrir_caminos():
