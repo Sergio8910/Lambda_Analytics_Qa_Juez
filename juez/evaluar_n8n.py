@@ -1906,6 +1906,157 @@ def _envelope_set_path(root: Dict[str, Any], path: List[str], value: Any) -> Non
         cur[path[-1]] = value
 
 
+# ---------------------------------------------------------------------------
+# Inferencia de condiciones de enrutamiento (Switch / IF / Filter)
+# ---------------------------------------------------------------------------
+# Sin esto, un flujo que enruta por `body.MessageType == "text"` recibe del Juez
+# el default generico ("dato de prueba QA"), no coincide con ninguna rama del
+# Switch y el flujo se detiene en "No output data in this branch" sin ejercitar
+# el agente. Analizando las condiciones, el sobre lleva el valor que SI toma una
+# rama valida, de modo que la QA recorre todos los nodos para CUALQUIER flujo.
+_ROUTING_NODE_TYPES = (
+    "n8n-nodes-base.switch",
+    "n8n-nodes-base.if",
+    "n8n-nodes-base.filter",
+)
+# Valores de rama preferidos: la rama "conversacional" que ejercita al agente IA
+# cuando un Switch ofrece varias (text / audio / image -> queremos text).
+_ROUTING_PREFERRED_VALUES = (
+    "text", "texto", "message", "mensaje", "chat", "conversation",
+    "conversacion", "string", "true",
+)
+
+
+# Métodos JS que aparecen tras un campo en expresiones n8n (`$json.message.replace(...)`,
+# `$json.body.type.toLowerCase()`). NO son campos: si se toman como ruta, el sobre
+# fabrica basura (ej. `message` se vuelve `{replace: "..."}` en vez de texto) y rompe
+# el flujo. Se descarta el segmento final si es una llamada de método.
+_JS_METHODS = {
+    "replace", "replaceall", "tolowercase", "touppercase", "trim", "trimstart", "trimend",
+    "split", "join", "includes", "indexof", "lastindexof", "slice", "substring", "substr",
+    "charat", "charcodeat", "tostring", "valueof", "map", "filter", "find", "findindex",
+    "some", "every", "concat", "startswith", "endswith", "match", "matchall", "search",
+    "padstart", "padend", "repeat", "normalize", "at", "reverse", "sort", "reduce",
+    "foreach", "keys", "values", "entries", "tofixed", "toprecision", "flat", "flatmap",
+    "trimend", "localecompare",
+}
+
+
+def _limpiar_path_parts(group: str, source: str, end: int) -> List[str]:
+    """Convierte el grupo capturado en partes de ruta, descartando el segmento
+    final cuando es una llamada de método JS (seguido de `(`) o un nombre de
+    método conocido. Evita fabricar campos basura a partir de `.replace()`, etc."""
+    parts = [p for p in group.replace("?", "").lstrip(".").split(".") if p]
+    if parts and (source[end:end + 1] == "(" or parts[-1].lower() in _JS_METHODS):
+        parts = parts[:-1]
+    return parts
+
+
+def _path_desde_expresion_n8n(expr: str) -> Optional[List[str]]:
+    """Extrae la ruta de campos leida de una expresion n8n.
+
+    Soporta `{{ $json.body.MessageType }}`, `$('Webhook').item.json.body.X`,
+    `.first().json.a` y la notacion de corchetes `$json['body']['type']`.
+    Devuelve None si la expresion no lee un campo del item entrante.
+    """
+    if not isinstance(expr, str) or not expr:
+        return None
+    mb = re.search(r"\$json\??((?:\[['\"][^'\"\]]+['\"]\])+)", expr)
+    if mb:
+        keys = re.findall(r"\[['\"]([^'\"\]]+)['\"]\]", mb.group(1))
+        if keys:
+            return keys
+    # `\??\.` tolera el optional chaining de JS (`$json.body?.MessageType`), muy
+    # comun en n8n moderno; sin esto la ruta se corta en `body` y el Switch que
+    # lee `body.MessageType` nunca recibe su campo -> el flujo se atasca.
+    m = re.search(r"\$json((?:\??\.[A-Za-z_][\w]*)+)", expr)
+    if not m:
+        m = re.search(r"\.json((?:\??\.[A-Za-z_][\w]*)+)", expr)
+    if not m:
+        return None
+    parts = _limpiar_path_parts(m.group(1), expr, m.end())
+    return parts or None
+
+
+def _es_operador_igualdad(op: Any) -> bool:
+    """True si el operador de una condicion es de igualdad (no !=, contains...)."""
+    if isinstance(op, dict):
+        name = str(op.get("operation") or op.get("type") or "").lower()
+    else:
+        name = str(op or "").lower()
+    name = name.replace(" ", "")
+    if not name:
+        return True  # switch legacy sin operador explicito => igualdad
+    if "notequal" in name:
+        return False
+    return "equal" in name or name == "=="
+
+
+def _literal_utilizable(right: Any) -> Optional[str]:
+    """Devuelve el literal comparado si es un valor fijo (no una expresion n8n)."""
+    if right is None or isinstance(right, (dict, list)):
+        return None
+    rv = str(right).strip()
+    if not rv or rv.startswith("=") or "{{" in rv or "$json" in rv or "$(" in rv:
+        return None
+    return rv
+
+
+def _recoger_condiciones(obj: Any, out: List[tuple]) -> None:
+    """Recorre recursivamente los parametros de un nodo recogiendo pares
+    (ruta_de_campo, literal) de condiciones de igualdad. Cubre el formato
+    moderno autocontenido (leftValue / rightValue / operator) de IF v2 y
+    Switch v3, a cualquier profundidad de anidamiento."""
+    if isinstance(obj, dict):
+        left = obj.get("leftValue", obj.get("value1"))
+        right = obj.get("rightValue", obj.get("value2"))
+        if isinstance(left, str):
+            path = _path_desde_expresion_n8n(left)
+            literal = _literal_utilizable(right)
+            op = obj.get("operator", obj.get("operation"))
+            if path and literal is not None and _es_operador_igualdad(op):
+                out.append((path, literal))
+        for v in obj.values():
+            _recoger_condiciones(v, out)
+    elif isinstance(obj, list):
+        for v in obj:
+            _recoger_condiciones(v, out)
+
+
+def _inferir_condiciones_routing(wf: Dict[str, Any]) -> Dict[tuple, str]:
+    """Mapa {ruta_de_campo: valor} para que el sobre tome una rama valida en los
+    nodos de enrutamiento del flujo. Combina el formato moderno (condiciones
+    autocontenidas) y el legacy de Switch (value1 + rules.rules[].value2)."""
+    recogidos: Dict[tuple, List[str]] = {}
+    for node in wf.get("nodes") or []:
+        if not isinstance(node, dict) or node.get("type") not in _ROUTING_NODE_TYPES:
+            continue
+        params = node.get("parameters") or {}
+        if not isinstance(params, dict):
+            continue
+        pares: List[tuple] = []
+        _recoger_condiciones(params, pares)
+        # Switch legacy v1/v2: el campo esta en value1 y las ramas en rules.rules.
+        v1 = params.get("value1")
+        if isinstance(v1, str):
+            path = _path_desde_expresion_n8n(v1)
+            if path:
+                rules = (params.get("rules") or {}).get("rules") or []
+                if isinstance(rules, list):
+                    for r in rules:
+                        literal = _literal_utilizable(r.get("value2")) if isinstance(r, dict) else None
+                        if literal is not None:
+                            pares.append((path, literal))
+        for path, value in pares:
+            recogidos.setdefault(tuple(path), []).append(value)
+
+    final: Dict[tuple, str] = {}
+    for path, values in recogidos.items():
+        elegido = next((v for v in values if v.lower() in _ROUTING_PREFERRED_VALUES), None)
+        final[path] = elegido or values[0]
+    return final
+
+
 def inferir_envelope_desde_wf(wf: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Infiere el "sobre" de entrada que espera un flujo n8n con webhook/chatTrigger.
 
@@ -1926,23 +2077,51 @@ def inferir_envelope_desde_wf(wf: Optional[Dict[str, Any]]) -> Optional[Dict[str
     if not any(isinstance(n, dict) and n.get("type") in trigger_types for n in nodes):
         return None
 
+    # El nodo Webhook de n8n ENVUELVE el cuerpo del POST bajo `body` (junto a
+    # `headers`/`query`/`params`). Por eso el flujo lo lee como
+    # `$json.body.MessageType`, pero lo que el Juez debe POSTear es el cuerpo SIN
+    # ese envoltorio: `{"MessageType": ...}` (n8n le añade el `body` solo). Si no
+    # se quita, el dato queda en `$json.body.body.MessageType` y nodos como el
+    # Switch nunca lo encuentran. El chatTrigger NO envuelve, asi que solo se
+    # despoja cuando hay webhook.
+    has_webhook = any(
+        isinstance(n, dict) and n.get("type") == "n8n-nodes-base.webhook" for n in nodes
+    )
+
+    def _strip_wrapper(parts: List[str]) -> List[str]:
+        if has_webhook and parts and parts[0].lower() == "body":
+            return parts[1:]
+        return parts
+
     try:
         blob = json.dumps(wf, ensure_ascii=False)
     except Exception:
         return None
 
     raw_paths: Set[str] = set()
-    # $json.body.a.b  /  $json.a
-    for m in re.finditer(r"\$json((?:\.[A-Za-z_][\w]*)+)", blob):
-        raw_paths.add(m.group(1).lstrip("."))
+    # $json.body.a.b  /  $json.a  (con `\??` para tolerar optional chaining `?.`,
+    # que en n8n moderno es lo normal: `$json.body?.MessageType`). Se descarta el
+    # segmento final si es una llamada de método JS (`.replace()`, `.toLowerCase()`).
+    for m in re.finditer(r"\$json((?:\??\.[A-Za-z_][\w]*)+)", blob):
+        parts = _limpiar_path_parts(m.group(1), blob, m.end())
+        if parts:
+            raw_paths.add(".".join(parts))
     # $json['body']['a']  (notacion de corchetes)
-    for m in re.finditer(r"\$json((?:\[['\"][^'\"\]]+['\"]\])+)", blob):
+    for m in re.finditer(r"\$json\??((?:\[['\"][^'\"\]]+['\"]\])+)", blob):
         keys = re.findall(r"\[['\"]([^'\"\]]+)['\"]\]", m.group(1))
         if keys:
             raw_paths.add(".".join(keys))
     # $('Nodo').item.json.body.a / .first().json.a  -> captura tras .json
-    for m in re.finditer(r"\.json((?:\.[A-Za-z_][\w]*)+)", blob):
-        raw_paths.add(m.group(1).lstrip("."))
+    for m in re.finditer(r"\.json((?:\??\.[A-Za-z_][\w]*)+)", blob):
+        parts = _limpiar_path_parts(m.group(1), blob, m.end())
+        if parts:
+            raw_paths.add(".".join(parts))
+
+    # Condiciones de enrutamiento (Switch/IF): fuerzan a un campo el valor que
+    # toma una rama valida (ej. body.MessageType -> "text"). Tiene prioridad
+    # sobre el default generico, pero NO sobre el marcador de mensaje/sesion:
+    # el texto real siempre debe fluir por su ruta.
+    routing = _inferir_condiciones_routing(wf)
 
     envelope: Dict[str, Any] = {}
     for path_str in raw_paths:
@@ -1956,21 +2135,45 @@ def inferir_envelope_desde_wf(wf: Optional[Dict[str, Any]]) -> Optional[Dict[str
             value: Any = MARCADOR_SESSION
         elif leaf in _ENVELOPE_MSG_KEYS:
             value = MARCADOR_MENSAJE
+        elif tuple(parts) in routing:
+            value = routing[tuple(parts)]
         else:
             # Campo de negocio: valor por defecto inferido por nombre.
             value = _infer_envelope_default(leaf)
-        _envelope_set_path(envelope, parts, value)
+        out_parts = _strip_wrapper(parts)  # n8n añade el `body`; no lo dupliques
+        if out_parts:
+            _envelope_set_path(envelope, out_parts, value)
         if len(envelope) > 25:
             break
 
+    # Red de seguridad: aplica condiciones de routing cuyo campo no haya salido
+    # en las expresiones escaneadas (el nodo Switch podria referenciarlo de una
+    # forma que el regex no capturo).
+    for parts_t, value in routing.items():
+        parts = list(parts_t)
+        if not parts or len(parts) > 5:
+            continue
+        if parts[0].lower() in _ENVELOPE_IGNORE_ROOTS:
+            continue
+        leaf = parts[-1].lower()
+        if leaf in _ENVELOPE_SESSION_KEYS or leaf in _ENVELOPE_MSG_KEYS:
+            continue
+        out_parts = _strip_wrapper(parts)
+        if out_parts:
+            _envelope_set_path(envelope, out_parts, value)
+
     # Garantia: si nada quedo con el marcador de mensaje, forzar los campos mas
     # comunes para que el texto SIEMPRE llegue por alguna ruta que el flujo lea.
+    # Con webhook n8n envuelve en `body`, asi que `message`/`chatInput` de nivel
+    # superior se leen como `$json.body.message`; el `body` anidado solo se añade
+    # para triggers que NO envuelven (chatTrigger u otros).
     if MARCADOR_MENSAJE not in json.dumps(envelope, ensure_ascii=False):
-        envelope.setdefault("body", {})
-        if isinstance(envelope["body"], dict):
-            envelope["body"].setdefault("message", MARCADOR_MENSAJE)
         envelope.setdefault("message", MARCADOR_MENSAJE)
         envelope.setdefault("chatInput", MARCADOR_MENSAJE)
+        if not has_webhook:
+            envelope.setdefault("body", {})
+            if isinstance(envelope["body"], dict):
+                envelope["body"].setdefault("message", MARCADOR_MENSAJE)
 
     return envelope or None
 

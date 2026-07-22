@@ -165,6 +165,10 @@ class EvalPipelineRequest(BaseModel):
         None,
         description="ID de un dataset de referencia (POST /reference-data/ingest). Si trae payload_template, se usa para disparar el webhook con la forma real que el flujo espera.",
     )
+    cubrir_caminos: bool = Field(
+        False,
+        description="Agrega escenarios dirigidos a cada rama del flujo (IF/Switch) para recorrer caminos distintos, no siempre el mismo. Aditivo y opt-in.",
+    )
     openai_key: Optional[str] = None
     elevenlabs_key: Optional[str] = None
     n8n_api_key: Optional[str] = None
@@ -212,6 +216,10 @@ class EvalProyectoRequest(BaseModel):
     reference_dataset_id: Optional[str] = Field(
         None,
         description="ID de un dataset de referencia previamente ingerido (POST /reference-data/ingest) para usar datos reales en las conversaciones de prueba.",
+    )
+    cubrir_caminos: bool = Field(
+        False,
+        description="Agrega escenarios dirigidos a cada rama del flujo (IF/Switch) para recorrer caminos distintos, no siempre el mismo. Aditivo y opt-in.",
     )
     openai_key: Optional[str] = None
     elevenlabs_key: Optional[str] = None

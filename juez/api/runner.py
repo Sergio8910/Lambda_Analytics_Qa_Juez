@@ -1193,6 +1193,7 @@ def run_pipeline(
     escenarios: Optional[List[str]] = None,
     modo_ejecucion: str = "real",
     reference_dataset_id: Optional[str] = None,
+    cubrir_caminos: bool = False,
     openai_key: str = "",
     elevenlabs_key: str = "",
     n8n_api_key: str = "",
@@ -1301,6 +1302,7 @@ def run_pipeline(
                     pv, oai_key, total_conversaciones, concurrencia,
                     modo_ejecucion=modo_ejecucion, escenarios_extra=escenarios,
                     payload_template=payload_template if pv["tipo"] == "n8n" else None,
+                    cubrir_caminos=cubrir_caminos,
                 )
                 node_results.append(result)
             except Exception as exc:
@@ -1672,6 +1674,7 @@ def run_proyecto(
     reglas_negocio: Optional[List[str]] = None,
     objetivos: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     reference_dataset_id: Optional[str] = None,
+    cubrir_caminos: bool = False,
     openai_key: str = "",
     elevenlabs_key: str = "",
     n8n_api_key: str = "",
@@ -1756,6 +1759,7 @@ def run_proyecto(
                     escenarios=escenarios_enriquecidos,
                     modo_ejecucion=modo_ejecucion,
                     reference_dataset_id=reference_dataset_id,
+                    cubrir_caminos=cubrir_caminos,
                     openai_key=openai_key,
                     elevenlabs_key=elevenlabs_key,
                     n8n_api_key=n8n_api_key,

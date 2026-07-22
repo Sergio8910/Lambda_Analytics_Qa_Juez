@@ -38,6 +38,7 @@ def _componentes_desde_config(config: Dict[str, Any]) -> Dict[str, Any]:
         "reglas_negocio": config.get("reglas_negocio") or [],
         "objetivos": config.get("objetivos"),
         "reference_dataset_id": config.get("reference_dataset_id"),
+        "cubrir_caminos": config.get("cubrir_caminos", False),
         "openai_key": config.get("openai_key") or "",
         "elevenlabs_key": config.get("elevenlabs_key") or "",
         "n8n_api_key": config.get("n8n_api_key") or "",

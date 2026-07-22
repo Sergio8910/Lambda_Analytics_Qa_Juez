@@ -32,6 +32,107 @@ MARCADOR_SESSION = "{{JUEZ_SESSION_ID}}"
 # que los tests puedan bajarlos a 0 y no dormir.
 _MAX_INTENTOS = 3
 _BACKOFF_BASE_S = 0.5
+# Reintentos de AUTO-SANADO: cuando un nodo del flujo rechaza el payload por un
+# dato faltante/invalido (4xx tipo "Missing X"), el contra-agente extrae el campo,
+# lo rellena con un valor valido y reintenta, para que la prueba recorra el flujo
+# completo en vez de quedar "mocha". Acotado para no ciclar.
+_MAX_HEAL = 3
+
+# Palabras que NO son nombres de campo (se descartan al extraer del mensaje).
+_STOPWORDS_CAMPO = {
+    "error", "request", "parameter", "parameters", "body", "field", "fields",
+    "value", "values", "the", "a", "an", "is", "are", "was", "el", "la", "los",
+    "las", "un", "una", "de", "del", "in", "with", "para", "por", "que", "please",
+    "check", "your", "missing", "required", "invalid", "bad", "json", "input",
+}
+
+
+def _campos_faltantes(text: str) -> List[str]:
+    """Extrae nombres de campo que el nodo dice faltar/estar mal, del cuerpo de
+    un error 4xx (ej. 'Missing transcription' -> ['transcription'])."""
+    if not text:
+        return []
+    campos: List[str] = []
+    patrones = [
+        r"missing\s+[\"']?([A-Za-z_][\w]*)",
+        r"falta[n]?\s+(?:el |la |los |las )?[\"']?([A-Za-z_][\w]*)",
+        r"[\"']?([A-Za-z_][\w]*)[\"']?\s+is\s+required",
+        r"required[:\s]+[\"']?([A-Za-z_][\w]*)",
+        r"requiere[n]?\s+(?:el |la |un |una )?[\"']?([A-Za-z_][\w]*)",
+        r"invalid\s+parameter[:\s]+[\"']?([A-Za-z_][\w]*)",
+        r"campo\s+[\"']?([A-Za-z_][\w]*)[\"']?\s+(?:es\s+)?(?:obligatorio|requerido|faltante|vac[ií]o)",
+        r"[\"']?([A-Za-z_][\w]*)[\"']?\s+(?:no puede|cannot) (?:estar|be)\s+(?:vac[ií]o|empty|null)",
+    ]
+    for pat in patrones:
+        for m in re.finditer(pat, text, re.I):
+            campo = m.group(1).strip()
+            if campo and campo.lower() not in _STOPWORDS_CAMPO and len(campo) > 1:
+                campos.append(campo)
+    # dedupe conservando orden
+    out, seen = [], set()
+    for c in campos:
+        if c.lower() not in seen:
+            seen.add(c.lower())
+            out.append(c)
+    return out
+
+
+# Reintentos ante el error de MEMORIA de chat del AI Agent (mensaje role='tool'
+# sin un 'tool_calls' previo). Se reintenta con una SESION NUEVA (memoria limpia)
+# para intentar pasar el nodo; si persiste, se reporta con "como solucionar".
+_MAX_MEM_RETRY = 2
+
+_MSG_MEMORIA = (
+    "nodo AI Agent / modelo de lenguaje: memoria de chat inconsistente "
+    "(mensaje role='tool' sin un 'tool_calls' previo). Suele pasar en "
+    "conversaciones multi-turno con herramientas: el nodo de memoria "
+    "(p.ej. Postgres Chat Memory) persiste el ciclo de herramienta incompleto y "
+    "al recargarlo el historial queda invalido. Como solucionar: limpiar el "
+    "historial de la sesion antes de la prueba, o ajustar el nodo de memoria para "
+    "no guardar mensajes 'tool' sueltos (o desactivar memoria si el flujo no la usa)."
+)
+
+
+def _es_error_memoria(text: str) -> bool:
+    """Detecta el error de OpenAI por historial de chat invalido con herramientas."""
+    low = (text or "").lower()
+    return "tool" in low and ("tool_calls" in low or "preceding message" in low or "preceeding message" in low)
+
+
+_FLOW_SIGNALS = (
+    "cannot read propert", "is not a function", "is not defined", "undefined",
+    "typeerror", "referenceerror", "syntaxerror", "nameerror", "econnrefused",
+    "etimedout", "unauthorized", "forbidden", "credential", "tool_calls",
+    "no output data", "authentication", "permission",
+)
+
+
+def _clasificar_error(status: int, text: str, campos: List[str]) -> str:
+    """'datos' = el flujo rechazo el payload (arreglable con mejores datos);
+    'flujo' = fallo del propio flujo/infra (se reporta, no se reintenta)."""
+    low = (text or "").lower()
+    if any(sig in low for sig in _FLOW_SIGNALS):
+        return "flujo"
+    if campos:
+        return "datos"
+    # 4xx sin campo identificable: probablemente datos, pero no auto-sanable.
+    return "datos" if 400 <= status < 500 else "flujo"
+
+
+def _detalle_error(text: str, status: int) -> str:
+    """Mensaje humano corto del error (intenta leer {'error': ...} del cuerpo)."""
+    import json as _json
+    if text:
+        try:
+            data = _json.loads(text)
+            if isinstance(data, dict):
+                for k in ("error", "message", "detail", "msg"):
+                    if isinstance(data.get(k), str) and data[k].strip():
+                        return data[k].strip()[:200]
+        except Exception:
+            pass
+        return text.strip()[:200]
+    return f"HTTP {status}"
 
 
 def _sustituir_marcadores(nodo: Any, mensaje: str, session_id: str) -> Any:
@@ -106,7 +207,12 @@ class N8nAdapter:
         # arregla solo. Tras agotar intentos, devuelve el error (last_debug ya
         # refleja el fallo, y el worker lo trata como fallo de transporte).
         ultimo_error = "error desconocido"
-        for intento in range(1, _MAX_INTENTOS + 1):
+        transient_left = _MAX_INTENTOS - 1   # reintentos por fallo transitorio (timeout/conexion/5xx)
+        heal_left = _MAX_HEAL                 # reintentos por auto-sanado de datos (4xx)
+        mem_left = _MAX_MEM_RETRY             # reintentos por error de memoria (sesion nueva)
+        healed: set[str] = set()
+        latency_ms = 0.0
+        while True:
             t0 = time.time()
             try:
                 resp = requests.post(
@@ -126,16 +232,64 @@ class N8nAdapter:
                     "query_enviado": params,
                     "response_preview": (resp.text or "")[:800],
                 }
-                if resp.status_code >= 500 and intento < _MAX_INTENTOS:
-                    ultimo_error = f"HTTP {resp.status_code}"
-                    time.sleep(_BACKOFF_BASE_S * intento)
-                    continue
+                # Error de MEMORIA de chat (role 'tool' sin 'tool_calls'): puede
+                # venir en 4xx o 5xx segun como el flujo envuelva el error de OpenAI.
+                # Se reintenta con SESION NUEVA (memoria limpia) para pasar el nodo.
+                if resp.status_code >= 400 and _es_error_memoria(resp.text):
+                    if mem_left > 0:
+                        mem_left -= 1
+                        self.session_id = f"juez-{uuid.uuid4().hex[:12]}"
+                        recent_history = []  # sesion nueva => historial limpio
+                        payload = (
+                            _sustituir_marcadores(copy.deepcopy(self.payload_template), message, self.session_id)
+                            if self.payload_template else self._build_payload(message, recent_history)
+                        )
+                        params = {"message": message, "chatInput": message, "sessionId": self.session_id}
+                        self.last_debug["auto_sanado_memoria"] = {"nueva_sesion": self.session_id}
+                        time.sleep(_BACKOFF_BASE_S)
+                        continue
+                    self.last_debug["error_class"] = "flujo"
+                    return f"[ERROR flujo: {_MSG_MEMORIA}]", latency_ms
+                # 5xx: fallo transitorio del servidor -> reintentar.
+                if resp.status_code >= 500:
+                    if transient_left > 0:
+                        transient_left -= 1
+                        ultimo_error = f"HTTP {resp.status_code}"
+                        time.sleep(_BACKOFF_BASE_S)
+                        continue
+                    self.last_debug["error_class"] = "flujo"
+                    return f"[ERROR flujo: HTTP {resp.status_code}]", latency_ms
+                # 4xx: el flujo rechazo el payload. Auto-sanar si es por DATOS
+                # (campo faltante/invalido) y quedan reintentos; si es del FLUJO
+                # o no se puede sanar, se reporta con su clasificacion.
+                if 400 <= resp.status_code < 500:
+                    campos = [c for c in _campos_faltantes(resp.text) if c.lower() not in healed]
+                    clasif = _clasificar_error(resp.status_code, resp.text, campos)
+                    if clasif == "datos" and campos and heal_left > 0:
+                        heal_left -= 1
+                        for c in campos:
+                            val = _infer_field_value(c, message, recent_history)
+                            payload[c] = val
+                            if isinstance(payload.get("body"), dict):
+                                payload["body"][c] = val
+                            healed.add(c.lower())
+                        self.last_debug["auto_sanado"] = {
+                            "campos_agregados": sorted(healed),
+                            "razon": _detalle_error(resp.text, resp.status_code),
+                        }
+                        time.sleep(_BACKOFF_BASE_S)
+                        continue
+                    detalle = _detalle_error(resp.text, resp.status_code)
+                    self.last_debug["error_class"] = clasif
+                    if healed:
+                        self.last_debug["auto_sanado_campos"] = sorted(healed)
+                    return f"[ERROR {clasif}: {detalle}]", latency_ms
+                # 2xx/3xx: exito.
                 resp.raise_for_status()
                 try:
                     data = resp.json()
                 except Exception:
                     data = {"text": resp.text}
-
                 text = (
                     data.get("response")
                     or data.get("message")
@@ -156,16 +310,16 @@ class N8nAdapter:
                 ultimo_error = f"ConnectionError: {exc}"
                 self.last_debug = _error_debug(self.webhook_url, payload, params, latency_ms, str(exc)[:300])
             except Exception as exc:
-                # Incluye HTTPError de raise_for_status (4xx u otro no transitorio):
-                # no reintentar, devolver de inmediato.
                 latency_ms = (time.time() - t0) * 1000
                 if not self.last_debug:
                     self.last_debug = _error_debug(self.webhook_url, payload, params, latency_ms, str(exc)[:300])
-                return f"[ERROR: {exc}]", latency_ms
+                return f"[ERROR flujo: {exc}]", latency_ms
             # Fallo transitorio (timeout/conexion): reintentar si quedan intentos.
-            if intento < _MAX_INTENTOS:
-                time.sleep(_BACKOFF_BASE_S * intento)
-        return f"[ERROR: {ultimo_error}]", latency_ms
+            if transient_left > 0:
+                transient_left -= 1
+                time.sleep(_BACKOFF_BASE_S)
+                continue
+            return f"[ERROR: {ultimo_error}]", latency_ms
 
     def _build_payload(self, message: str, recent_history: List[Dict[str, str]]) -> Dict[str, Any]:
         """Construye un payload amplio para maximizar compatibilidad con n8n.
@@ -257,7 +411,7 @@ def _infer_field_value(field: str, message: str, history: List[Dict[str, str]]) 
 
     if "email" in f or "correo" in f:
         return email.group(0) if email else "qa.lambda@example.com"
-    if any(k in f for k in ("phone", "telefono", "celular", "whatsapp", "mobile")):
+    if any(k in f for k in ("phone", "telefono", "celular", "whatsapp", "mobile", "numero", "number", "waid", "msisdn")):
         return phone.group(1).replace(" ", "").replace(".", "").replace("-", "") if phone else "3001234567"
     if any(k in f for k in ("nombre", "name", "cliente", "user")):
         return "Sergio QA"

@@ -383,9 +383,14 @@ def _evaluar_con_analisis(
     modo_ejecucion: str = "real",
     escenarios_extra: Optional[List[str]] = None,
     payload_template: Optional[Dict[str, Any]] = None,
+    cubrir_caminos: bool = False,
 ) -> NodeResult:
     """Recibe un preview con analisis ya hecho (y opcionalmente ajustado por el usuario)
-    y solo corre la parte dinámica (contra-agente). Retorna NodeResult completo."""
+    y solo corre la parte dinámica (contra-agente). Retorna NodeResult completo.
+
+    `cubrir_caminos`: si True y el nodo es n8n, agrega escenarios DIRIGIDOS a cada
+    rama del flujo (IF/Switch) para recorrer caminos distintos en vez de golpear
+    siempre el mismo. Aditivo y opt-in (default False = comportamiento clasico)."""
     import importlib.util as _ilu
 
     tipo      = preview["tipo"]
@@ -451,6 +456,19 @@ def _evaluar_con_analisis(
                 envelope_hint = _mod.inferir_envelope_desde_wf(wf_data)
             except Exception:
                 envelope_hint = None
+
+        # Cobertura de caminos (opt-in): agrega escenarios dirigidos a cada rama
+        # del flujo para no golpear siempre la misma. Mismo patron que
+        # run_n8n_single; puramente aditivo sobre escenarios_extra.
+        escenarios_extra = list(escenarios_extra or [])
+        if cubrir_caminos and wf_data:
+            try:
+                from juez.evaluation.n8n.path_coverage import generar_escenarios_por_rama
+                escenarios_extra = escenarios_extra + [
+                    e["escenario"] for e in generar_escenarios_por_rama(wf_data)
+                ]
+            except Exception:
+                pass
 
         if HAS_CA and total_conv > 0 and modo_ejecucion == "sandbox":
             batch_result, reporte_ca = _mod.ejecutar_contra_agente(
