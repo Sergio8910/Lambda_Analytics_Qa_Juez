@@ -144,6 +144,9 @@ class ProjectEvaluationReport(BaseModel):
     legacy_component_score: float | None = None
     legacy_component_findings: list[dict[str, Any]] = Field(default_factory=list)
     dynamic_cost_summary: dict[str, Any] | None = None
+    # Informes de especialistas de IA y síntesis de la Reina. Se mantiene
+    # separado del score determinista para conservar trazabilidad.
+    ai_swarm: dict[str, Any] = Field(default_factory=dict)
     # Indice de cobertura: que dimensiones de analisis se evaluaron, cuales se
     # omitieron y por que. Hace visible el alcance real de la evaluacion en vez
     # de dejar al consumidor asumir que "sin hallazgos" == "todo revisado".

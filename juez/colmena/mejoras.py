@@ -178,7 +178,7 @@ def _reescribir_prompt(prompt_actual: str, recomendaciones: List[str],
     Reescribe corrigiendo lo detectado, PRESERVANDO intención, idioma y las
     variables {{...}}/{...}. Degrada devolviendo "" ante cualquier problema.
     """
-    from openai import OpenAI
+    from juez.llm_client import make_chat_client
 
     guia = []
     for r in (recomendaciones or [])[:6]:
@@ -203,7 +203,7 @@ def _reescribir_prompt(prompt_actual: str, recomendaciones: List[str],
     )
     user = f"PROBLEMAS A CORREGIR:\n{guia_txt}\n\nSYSTEM PROMPT ACTUAL:\n{prompt_actual}"
 
-    client = OpenAI(api_key=api_key)
+    client = make_chat_client(api_key=api_key)
     resp = client.chat.completions.create(
         model=os.getenv("JUDGE_MODEL", "gpt-4o-mini"),
         messages=[{"role": "system", "content": sistema}, {"role": "user", "content": user}],
@@ -222,8 +222,9 @@ def proponer_mejora_prompt(nombre: str, prompt_actual: str,
     prompt_actual = (prompt_actual or "").strip()
     if not prompt_actual:
         return None
+    from juez.llm_client import api_key_presente
     key = api_key or os.getenv("OPENAI_API_KEY", "")
-    if not key:
+    if not key and not api_key_presente():
         return None
 
     senales = [p for p in problemas if _es_senal_de_prompt(p)]

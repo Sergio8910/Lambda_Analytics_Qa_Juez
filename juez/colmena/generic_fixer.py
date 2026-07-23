@@ -110,18 +110,15 @@ class GenericFixOutcome:
 def _default_llm_generator(before_text: str, context: GenericFixContext) -> GenericFixProposal | None:
     from juez.settings import settings
 
-    if not settings.OPENAI_API_KEY:
-        return None
-    try:
-        from openai import OpenAI
-    except Exception:
+    from juez.llm_client import make_chat_client, api_key_presente
+    if not api_key_presente():
         return None
     model = os.getenv("COLMENA_GENERIC_FIXER_MODEL", settings.JUDGE_MODEL)
     timeout_s = float(os.getenv("COLMENA_GENERIC_FIXER_TIMEOUT_S", "45"))
     max_tokens = int(os.getenv("COLMENA_GENERIC_FIXER_MAX_OUTPUT_TOKENS", "4096"))
     prompt = _build_llm_prompt(before_text, context)
     try:
-        client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=timeout_s, max_retries=0)
+        client = make_chat_client(api_key=settings.OPENAI_API_KEY, timeout=timeout_s, max_retries=0)
         resp = client.chat.completions.create(
             model=model,
             messages=[

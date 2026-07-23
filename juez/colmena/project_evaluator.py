@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -126,6 +128,40 @@ def evaluate_project_path(
             if summary.get("total_calls"):
                 cost_summary = summary
 
+    ai_swarm: dict[str, Any]
+    swarm_enabled = os.getenv("JUEZ_AI_SWARM_ENABLED", "false").lower() == "true"
+    if swarm_enabled and incluir_dinamicas:
+        from juez.llm_client import api_key_presente
+
+        if api_key_presente():
+            from juez.swarm_context import SwarmContextRegistry
+            from .ai_swarm import run_ai_swarm
+
+            evaluation_id = f"{project_id or root.name}-{uuid.uuid4().hex[:12]}"
+            registry = SwarmContextRegistry(evaluation_id)
+            ai_swarm = run_ai_swarm(
+                project_id=project_id or root.name,
+                root=root,
+                inventory=inventory,
+                deterministic_findings=list(findings),
+                registry=registry,
+            )
+        else:
+            ai_swarm = {
+                "enabled": False,
+                "reason": "No hay credencial para el proveedor LLM activo",
+            }
+    elif swarm_enabled:
+        ai_swarm = {
+            "enabled": False,
+            "reason": "La evaluación se solicitó sin la capa dinámica",
+        }
+    else:
+        ai_swarm = {
+            "enabled": False,
+            "reason": "JUEZ_AI_SWARM_ENABLED no está activo",
+        }
+
     score = score_project(findings)
     coverage = _compute_coverage(
         root, inventory, rules_report, incluir_dinamicas=incluir_dinamicas,
@@ -143,6 +179,7 @@ def evaluate_project_path(
         legacy_component_score=legacy_score,
         legacy_component_findings=legacy_findings,
         dynamic_cost_summary=cost_summary,
+        ai_swarm=ai_swarm,
         coverage=coverage,
     )
 
@@ -337,6 +374,28 @@ def render_project_report(report: ProjectEvaluationReport) -> str:
             f"  COSTO OBRERAS DINAMICAS: {s.get('total_calls', 0)} llamada(s), "
             f"{s.get('total_tokens', 0)} tokens, USD ~{s.get('total_cost_usd', 0)}"
         )
+    if report.ai_swarm.get("enabled"):
+        specialists = report.ai_swarm.get("specialists", [])
+        completed = sum(1 for item in specialists if item.get("status") == "completed")
+        queen = report.ai_swarm.get("queen", {})
+        lines.append("")
+        lines.append("  COLMENA MULTI-IA:")
+        lines.append(f"    Especialistas completadas: {completed}/{len(specialists)}")
+        lines.append(f"    Decision de la Reina      : {queen.get('decision', 'inconclusive')}")
+        if queen.get("summary"):
+            lines.append(f"    Sintesis                   : {queen['summary']}")
+        for finding in queen.get("consensus_findings", [])[:10]:
+            supporters = ", ".join(finding.get("supporting_bees", []))
+            lines.append(
+                f"    [{str(finding.get('severity', 'info')).upper()}] "
+                f"{finding.get('title', 'Hallazgo de consenso')} "
+                f"(abejas: {supporters or 'no indicado'})"
+            )
+        for conflict in queen.get("conflicts", [])[:5]:
+            lines.append(
+                f"    Conflicto: {conflict.get('topic', '')} -> "
+                f"{conflict.get('resolution', 'requiere revision')}"
+            )
     lines.append("")
     lines.append("  AUTO-FIX:")
     lines.append(f"    Corregibles automaticamente: {', '.join(report.auto_fixable) or 'ninguno'}")

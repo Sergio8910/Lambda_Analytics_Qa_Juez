@@ -1,6 +1,7 @@
 # Core dependencies
 deepeval
 openai
+anthropic>=0.40.0  # Proveedor LLM alternativo (cuenta directa de Claude) — ver juez/llm_client.py
 pytest
 pydantic>=2.0
 python-dotenv>=1.0.0

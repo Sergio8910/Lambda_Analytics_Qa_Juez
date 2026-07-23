@@ -1,6 +1,6 @@
 import json
 import langwatch
-from openai import OpenAI
+from juez.llm_client import make_chat_client, usando_claude, usando_ordo
 from juez.settings import settings
 
 
@@ -16,7 +16,7 @@ if settings.ENABLE_LANGWATCH and settings.LANGWATCH_API_KEY:
 # OPENAI CLIENT
 # ==============================
 
-client = OpenAI(api_key=settings.OPENAI_API_KEY)
+client = make_chat_client(api_key=settings.OPENAI_API_KEY)
 
 
 # ==============================
@@ -79,7 +79,7 @@ def parse_json_safe(text: str):
 def run_judge(input_text: str, output_text: str) -> dict:
     prompt = build_judge_prompt(input_text, output_text)
     # Autotrack llamadas OpenAI dentro del trace
-    if settings.ENABLE_LANGWATCH:
+    if settings.ENABLE_LANGWATCH and not usando_claude() and not usando_ordo():
         langwatch.get_current_trace().autotrack_openai_calls(client)
     completion = client.chat.completions.create(
         model=settings.JUDGE_MODEL,

@@ -18,28 +18,21 @@ import os
 from typing import Any
 
 from juez.evaluation.core.task_success_rubric import build_task_success_rubric
+from juez.llm_client import make_chat_client, api_key_presente
 
 _SUCCESS_THRESHOLD = 0.6
 
 
 def _llm_disponible() -> bool:
-    if not os.getenv("OPENAI_API_KEY"):
-        return False
-    try:
-        import openai  # noqa: F401
-        return True
-    except Exception:
-        return False
+    return api_key_presente()
 
 
 def _juzgar_proposito(prompt_sistema: str, proposito: str) -> dict[str, Any]:
     """Una llamada LLM: simula una interaccion realista con el agente y la
     juzga con la MISMA rubrica task_success del motor central (no una
     inventada ad-hoc)."""
-    from openai import OpenAI
-
     criteria, steps, _mode = build_task_success_rubric(proposito, tags=set())
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client = make_chat_client(api_key=os.getenv("OPENAI_API_KEY"))
     sistema = (
         "Eres un evaluador de agentes de IA. Te doy el SYSTEM PROMPT de un agente "
         "y el PROPOSITO/OBJETIVO que se espera que cumpla. "

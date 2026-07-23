@@ -6,12 +6,12 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from openai import OpenAI
+from juez.llm_client import make_chat_client
 
 from juez.settings import settings
 
-# Initialize OpenAI client using project settings
-client = OpenAI(api_key=settings.OPENAI_API_KEY)
+# Cliente de chat: OpenAI, Claude u Ordo según JUEZ_LLM_PROVIDER.
+client = make_chat_client(api_key=settings.OPENAI_API_KEY)
 
 # Allow overriding the agent model via env; fallback to judge model
 AGENT_MODEL = os.getenv("AGENT_MODEL", settings.JUDGE_MODEL)
