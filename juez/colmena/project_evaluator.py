@@ -46,6 +46,42 @@ _CATEGORY_PENALTY_CAP_MULTIPLIER = 4.0
 # categorias sanas y salir con un score alto.
 _CATEGORIAS_BLOQUEANTES = {"security", "business_rule"}
 
+_VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+
+
+def _swarm_findings_to_normalized(ai_swarm: dict[str, Any], start_index: int) -> list[NormalizedFinding]:
+    """Convierte los hallazgos de consenso de la Reina (colmena multi-IA) en
+    ``NormalizedFinding`` para que cuenten en el score y fluyan a las mejoras
+    (``consolidar_proyecto`` lee ``report.findings``, no ``ai_swarm``). La
+    severidad/categoría se validan contra el enum; lo inválido cae a valores
+    seguros para no romper el modelo estricto."""
+    queen = (ai_swarm or {}).get("queen") or {}
+    out: list[NormalizedFinding] = []
+    for i, f in enumerate(queen.get("consensus_findings") or []):
+        if not isinstance(f, dict):
+            continue
+        sev = str(f.get("severity") or "").strip().lower()
+        if sev not in _VALID_SEVERITIES:
+            sev = "medium"
+        cat = str(f.get("category") or "").strip().lower()
+        if cat not in _CATEGORY_WEIGHTS:
+            cat = "agent"
+        title = (str(f.get("title") or "").strip() or "Hallazgo de la colmena multi-IA")[:300]
+        bees = f.get("supporting_bees") or []
+        bees_txt = ", ".join(str(b) for b in bees) if isinstance(bees, list) else str(bees)
+        out.append(NormalizedFinding(
+            id=f"AISWARM-{start_index + i + 1:03d}",
+            severity=sev,  # type: ignore[arg-type]
+            category=cat,  # type: ignore[arg-type]
+            title=title,
+            description=(str(f.get("description") or f.get("evidence") or title))[:800],
+            evidence=(str(f.get("evidence") or ""))[:800],
+            recommendation=(str(f.get("recommendation") or ""))[:500],
+            auto_fix_available=False,
+            source=f"colmena_multiia ({bees_txt})" if bees_txt else "colmena_multiia",
+        ))
+    return out
+
 
 _WEBHOOKS_FILENAMES = ("webhooks_n8n.json",)
 
@@ -129,33 +165,45 @@ def evaluate_project_path(
                 cost_summary = summary
 
     ai_swarm: dict[str, Any]
+    # La colmena multi-IA (especialistas Ordo + Reina) corre siempre que esté
+    # habilitada y haya credencial, INDEPENDIENTE de `incluir_dinamicas`: solo
+    # necesita el inventario y los findings deterministas, disponibles siempre.
+    # Antes estaba gateada tras `incluir_dinamicas` (que la UI manda en false),
+    # así que la colmena nunca corría ni enriquecía el QA.
     swarm_enabled = os.getenv("JUEZ_AI_SWARM_ENABLED", "false").lower() == "true"
-    if swarm_enabled and incluir_dinamicas:
+    if swarm_enabled:
         from juez.llm_client import api_key_presente
 
         if api_key_presente():
             from juez.swarm_context import SwarmContextRegistry
             from .ai_swarm import run_ai_swarm
 
-            evaluation_id = f"{project_id or root.name}-{uuid.uuid4().hex[:12]}"
-            registry = SwarmContextRegistry(evaluation_id)
-            ai_swarm = run_ai_swarm(
-                project_id=project_id or root.name,
-                root=root,
-                inventory=inventory,
-                deterministic_findings=list(findings),
-                registry=registry,
-            )
+            # Blindaje: si el proveedor LLM (Ordo) falla, agota su cupo o tarda,
+            # el QA NO debe caerse. Se degrada a los findings deterministas y se
+            # deja constancia del motivo en `ai_swarm`.
+            try:
+                evaluation_id = f"{project_id or root.name}-{uuid.uuid4().hex[:12]}"
+                registry = SwarmContextRegistry(evaluation_id)
+                ai_swarm = run_ai_swarm(
+                    project_id=project_id or root.name,
+                    root=root,
+                    inventory=inventory,
+                    deterministic_findings=list(findings),
+                    registry=registry,
+                )
+                # Fusiona los hallazgos de consenso de la Reina en los findings del
+                # proyecto para que cuenten en el score y lleguen a las mejoras.
+                findings.extend(_swarm_findings_to_normalized(ai_swarm, len(findings)))
+            except Exception as exc:  # noqa: BLE001 — degradar, nunca romper el QA
+                ai_swarm = {
+                    "enabled": False,
+                    "reason": f"La colmena multi-IA no pudo completarse: {exc}",
+                }
         else:
             ai_swarm = {
                 "enabled": False,
                 "reason": "No hay credencial para el proveedor LLM activo",
             }
-    elif swarm_enabled:
-        ai_swarm = {
-            "enabled": False,
-            "reason": "La evaluación se solicitó sin la capa dinámica",
-        }
     else:
         ai_swarm = {
             "enabled": False,
