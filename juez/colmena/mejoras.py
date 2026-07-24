@@ -90,9 +90,53 @@ def _problemas_de_colmena(colmena) -> List[Dict[str, Any]]:
 
 
 def _problemas_de_conversacion(conversacion: Optional[dict]) -> List[Dict[str, Any]]:
-    if not isinstance(conversacion, dict) or conversacion.get("error"):
+    if not isinstance(conversacion, dict):
         return []
     out: List[Dict[str, Any]] = []
+    # Fallo TOTAL de la ejecución (el pipeline lanzó excepción). Antes se
+    # descartaba con `return []` y el informe no mostraba NADA del fallo. Ahora
+    # se reporta como problema crítico para que el fallo del flujo sea visible.
+    if conversacion.get("error"):
+        out.append({
+            "titulo": "El flujo falló al ejecutarse",
+            "severidad": "critico",
+            "descripcion": (
+                "La ejecución de las pruebas contra el flujo/agente no se pudo completar: "
+                f"{conversacion.get('error')}"
+            ),
+            "ubicacion": "ejecución del flujo",
+            "recomendacion": (
+                "Verifica que el flujo n8n/agente esté activo y responda, revisa credenciales "
+                "y el destino (workflow_id/webhook), corrige el error y vuelve a correr el QA."
+            ),
+            "origen": "conversaciones",
+        })
+        return out
+    # Flujos que fallaron en análisis o pruebas SIN tumbar el pipeline global.
+    # `run_pipeline` los deja en `flujos_fallidos` (top-level), que antes no se
+    # surfaceaba en el contrato firme → el flujo fallido quedaba invisible.
+    for f in conversacion.get("flujos_fallidos", []) or []:
+        if isinstance(f, str):
+            f = {"error": f}
+        if not isinstance(f, dict):
+            continue
+        etapa = str(f.get("etapa") or "").strip()
+        url = str(f.get("url") or f.get("nombre") or "").strip()
+        out.append({
+            "titulo": (f"Flujo falló en etapa {etapa}" if etapa else "Flujo falló")[:120],
+            "severidad": "alto",
+            "descripcion": (
+                f"{url or 'El flujo'} falló"
+                + (f" en la etapa '{etapa}'" if etapa else "")
+                + f": {f.get('error', 'error no especificado')}"
+            ),
+            "ubicacion": url or "flujo n8n",
+            "recomendacion": (
+                "Verifica el destino del flujo (workflow_id/webhook), que esté activo, "
+                "las credenciales y que responda sin error."
+            ),
+            "origen": "conversaciones",
+        })
     for nodo in conversacion.get("nodos", []) or []:
         nombre_nodo = nodo.get("name", "")
         for p in nodo.get("problemas", []) or []:

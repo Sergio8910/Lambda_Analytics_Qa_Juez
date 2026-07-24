@@ -7,8 +7,24 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from juez.colmena.self_heal_agent import run_self_heal
 from juez.colmena.self_heal_report import render_self_heal_report, write_self_heal_report
+
+
+@pytest.fixture(autouse=True)
+def _aislar_proveedor_llm(monkeypatch):
+    """Aísla estos tests del proveedor LLM real. El .env de producción puede
+    traer Ordo/Anthropic/OpenAI configurados; sin este aislamiento, el self-heal
+    haría llamadas reales (lentas y no deterministas) y rompería las aserciones
+    escritas para el camino sin-LLM. Como los tests por subprocess construyen su
+    entorno con ``dict(os.environ)`` DESPUÉS de este fixture, también lo heredan.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("ORDO_API_KEY", "")
+    monkeypatch.setenv("JUEZ_LLM_PROVIDER", "openai")
 
 
 def _write(path: Path, text: str) -> None:

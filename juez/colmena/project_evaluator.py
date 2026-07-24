@@ -49,37 +49,81 @@ _CATEGORIAS_BLOQUEANTES = {"security", "business_rule"}
 _VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
 
 
+def _one_swarm_finding(f: dict[str, Any], idx: int, bee: str) -> NormalizedFinding | None:
+    """Mapea un hallazgo del swarm (consenso o de especialista) a NormalizedFinding,
+    validando severity/category contra el enum estricto."""
+    if not isinstance(f, dict):
+        return None
+    sev = str(f.get("severity") or "").strip().lower()
+    if sev not in _VALID_SEVERITIES:
+        sev = "medium"
+    cat = str(f.get("category") or f.get("categoria") or "").strip().lower()
+    if cat not in _CATEGORY_WEIGHTS:
+        cat = "agent"
+    title = (str(f.get("title") or f.get("descripcion") or "").strip() or "Hallazgo de la colmena multi-IA")[:300]
+    return NormalizedFinding(
+        id=f"AISWARM-{idx:03d}",
+        severity=sev,  # type: ignore[arg-type]
+        category=cat,  # type: ignore[arg-type]
+        title=title,
+        description=(str(f.get("description") or f.get("evidence") or title))[:800],
+        evidence=(str(f.get("evidence") or ""))[:800],
+        recommendation=(str(f.get("recommendation") or f.get("accion") or ""))[:500],
+        auto_fix_available=False,
+        source=f"colmena_multiia ({bee})" if bee else "colmena_multiia",
+    )
+
+
+# Tope de hallazgos del swarm que se fusionan (evita inundar las mejoras cuando
+# los especialistas reportan mucho y la Reina no consolidó).
+_SWARM_MERGE_CAP = 40
+
+
 def _swarm_findings_to_normalized(ai_swarm: dict[str, Any], start_index: int) -> list[NormalizedFinding]:
-    """Convierte los hallazgos de consenso de la Reina (colmena multi-IA) en
-    ``NormalizedFinding`` para que cuenten en el score y fluyan a las mejoras
-    (``consolidar_proyecto`` lee ``report.findings``, no ``ai_swarm``). La
-    severidad/categoría se validan contra el enum; lo inválido cae a valores
-    seguros para no romper el modelo estricto."""
-    queen = (ai_swarm or {}).get("queen") or {}
+    """Convierte los hallazgos de la colmena multi-IA en ``NormalizedFinding``
+    para que cuenten en el score y fluyan a las mejoras (``consolidar_proyecto``
+    lee ``report.findings``, no ``ai_swarm``).
+
+    Preferencia: la síntesis de consenso de la Reina. Si la Reina no consolidó
+    (p. ej. el proveedor LLM se negó al rol/JSON, como hace Ordo), se cae a
+    fusionar los hallazgos de los ESPECIALISTAS directamente (deduplicados),
+    para no desperdiciar su análisis. Cap en ``_SWARM_MERGE_CAP``."""
+    aw = ai_swarm or {}
+    queen = aw.get("queen") or {}
     out: list[NormalizedFinding] = []
-    for i, f in enumerate(queen.get("consensus_findings") or []):
-        if not isinstance(f, dict):
-            continue
-        sev = str(f.get("severity") or "").strip().lower()
-        if sev not in _VALID_SEVERITIES:
-            sev = "medium"
-        cat = str(f.get("category") or "").strip().lower()
-        if cat not in _CATEGORY_WEIGHTS:
-            cat = "agent"
-        title = (str(f.get("title") or "").strip() or "Hallazgo de la colmena multi-IA")[:300]
-        bees = f.get("supporting_bees") or []
-        bees_txt = ", ".join(str(b) for b in bees) if isinstance(bees, list) else str(bees)
-        out.append(NormalizedFinding(
-            id=f"AISWARM-{start_index + i + 1:03d}",
-            severity=sev,  # type: ignore[arg-type]
-            category=cat,  # type: ignore[arg-type]
-            title=title,
-            description=(str(f.get("description") or f.get("evidence") or title))[:800],
-            evidence=(str(f.get("evidence") or ""))[:800],
-            recommendation=(str(f.get("recommendation") or ""))[:500],
-            auto_fix_available=False,
-            source=f"colmena_multiia ({bees_txt})" if bees_txt else "colmena_multiia",
-        ))
+    seen: set[tuple[str, str]] = set()
+    n = start_index
+
+    def _push(f: dict[str, Any], bee: str) -> None:
+        nonlocal n
+        if len(out) >= _SWARM_MERGE_CAP:
+            return
+        title = str(f.get("title") or f.get("descripcion") or "").strip().lower()[:120]
+        cat = str(f.get("category") or f.get("categoria") or "").strip().lower()
+        key = (cat, title)
+        if title and key in seen:
+            return
+        nf = _one_swarm_finding(f, n + 1, bee)
+        if nf is None:
+            return
+        seen.add(key)
+        out.append(nf)
+        n += 1
+
+    consensus = queen.get("consensus_findings") or []
+    if consensus:
+        for f in consensus:
+            bees = f.get("supporting_bees") if isinstance(f, dict) else None
+            bee = ", ".join(str(b) for b in bees) if isinstance(bees, list) else ""
+            _push(f if isinstance(f, dict) else {}, bee)
+    else:
+        # Fallback: la Reina no consolidó → usar el trabajo de los especialistas.
+        for sp in aw.get("specialists") or []:
+            if not isinstance(sp, dict) or sp.get("status") != "completed":
+                continue
+            bee = str(sp.get("bee_id") or "")
+            for f in sp.get("findings") or []:
+                _push(f if isinstance(f, dict) else {}, bee)
     return out
 
 
